@@ -27,7 +27,9 @@ export default tseslint.config(
   {
     rules: {
       'no-console': 'warn',
-      'no-unused-vars': 'warn',
+      // The core rule does not understand TypeScript parameter properties and
+      // type-only callback parameters. Use the TypeScript-aware rule below.
+      'no-unused-vars': 'off',
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/no-unused-vars': 'error',
       '@typescript-eslint/no-floating-promises': 'warn',
