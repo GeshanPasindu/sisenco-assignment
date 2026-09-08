@@ -65,7 +65,7 @@ export function AcceptInvitationForm({ token, invitation }: { token: string; inv
           <FormField label="City (optional)" autoComplete="address-level2" {...register('city')} error={errors.city?.message} />
           <FormField label="Postal code (optional)" autoComplete="postal-code" {...register('postalCode')} error={errors.postalCode?.message} />
         </div>
-        <FormField label="Password" type="password" autoComplete="new-password" {...register('password')} error={errors.password?.message} hint="Use 15–128 characters. Spaces and Unicode characters are welcome." required />
+        <FormField label="Password" type="password" autoComplete="new-password" {...register('password')} error={errors.password?.message} hint="Use 8–128 characters. Spaces and Unicode characters are welcome." required />
         <FormField label="Confirm password" type="password" autoComplete="new-password" {...register('confirmPassword')} error={errors.confirmPassword?.message} required />
         <button type="submit" className="button-primary mt-2 w-full px-4 disabled:cursor-not-allowed" aria-busy={pending}>
           {pending ? 'Completing registration…' : 'Accept invitation'}

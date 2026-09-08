@@ -10,6 +10,6 @@ describe('authentication schemas', () => {
 
   it('requires the documented password length but permits spaces and Unicode', () => {
     expect(newPasswordSchema.parse('correct horse â˜ƒ')).toBe('correct horse â˜ƒ')
-    expect(newPasswordSchema.safeParse('too short').success).toBe(false)
+    expect(newPasswordSchema.safeParse('short').success).toBe(false)
   })
 })

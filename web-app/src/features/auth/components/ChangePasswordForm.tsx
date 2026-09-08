@@ -39,7 +39,7 @@ export function ChangePasswordForm() {
         <legend className="sr-only">Change your password</legend>
         {errors.root?.server?.message && <FormFeedback>{errors.root.server.message}</FormFeedback>}
         <FormField label="Current password" type="password" autoComplete="current-password" {...register('currentPassword')} error={errors.currentPassword?.message} required />
-        <FormField label="New password" type="password" autoComplete="new-password" {...register('newPassword')} error={errors.newPassword?.message} hint="Use 15–128 characters. Spaces and Unicode characters are welcome." required />
+        <FormField label="New password" type="password" autoComplete="new-password" {...register('newPassword')} error={errors.newPassword?.message} hint="Use 8–128 characters. Spaces and Unicode characters are welcome." required />
         <FormField label="Confirm new password" type="password" autoComplete="new-password" {...register('confirmPassword')} error={errors.confirmPassword?.message} required />
         <button type="submit" className="button-primary mt-2 w-full px-4 disabled:cursor-not-allowed" aria-busy={pending}>
           {pending ? 'Changing password…' : 'Change password'}

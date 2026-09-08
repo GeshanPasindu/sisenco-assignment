@@ -22,7 +22,7 @@ export const reportsApi = baseApi.injectEndpoints({
       PaginatedResponse<ReportListItem>,
       {
         page?: number; pageSize?: number; scope?: "own" | "team";
-        fromWeek?: string; toWeek?: string; projectId?: string; status?: string; memberId?: string;
+        fromWeek?: string; toWeek?: string; projectId?: string; projectQuery?: string; status?: string; memberId?: string; memberQuery?: string;
       }
     >({
       query: (params) => ({ url: "/reports", params }),

@@ -87,4 +87,18 @@ describe('ReportsService', () => {
       response: expect.objectContaining({ code: 'REPORT_NOT_DELETABLE' }),
     });
   });
+
+  it('rejects creation of a report for a future week', async () => {
+    const { service } = fixture();
+    const future = new Date();
+    const day = future.getUTCDay();
+    future.setUTCHours(0, 0, 0, 0);
+    future.setUTCDate(future.getUTCDate() + (day === 0 ? 1 : 8 - day));
+
+    await expect(
+      service.create(owner, { weekStart: future.toISOString().slice(0, 10) }),
+    ).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'FUTURE_REPORT_NOT_ALLOWED' }),
+    });
+  });
 });
