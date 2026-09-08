@@ -30,6 +30,9 @@
 Database setup, Stage 1 verification, custom constraints and future migration
 instructions: [Database guide](docs/database.md).
 
+Authentication setup, A01–A06, frontend cookies and verification:
+[Authentication guide](docs/authentication.md).
+
 ```bash
 $ npm install
 ```

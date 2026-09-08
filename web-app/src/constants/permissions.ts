@@ -1,0 +1,16 @@
+export const PERMISSIONS = {
+  profileReadOwn: 'profile:read_own',
+  profileUpdateOwn: 'profile:update_own',
+  dashboardReadOwn: 'dashboard:read_own',
+  dashboardReadTeam: 'dashboard:read_team',
+  reportReadOwn: 'report:read_own',
+  reportReadTeam: 'report:read_team',
+  taskReadOwn: 'task:read_own',
+  taskManageTeam: 'task:manage_team',
+  projectRead: 'project:read',
+  projectManage: 'project:manage',
+  userReadTeam: 'user:read_team',
+  userManage: 'user:manage',
+  notificationReadOwn: 'notification:read_own',
+  notificationUpdateOwn: 'notification:update_own',
+} as const
