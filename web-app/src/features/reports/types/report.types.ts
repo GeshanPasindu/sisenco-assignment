@@ -27,6 +27,10 @@ export interface ReportTaskInput {
 }
 export interface ReportTask extends ReportTaskInput {
   projectNameSnapshot?: string | null;
+  sourceTaskDescription?: string | null;
+  sourceTaskPlannedDate?: string | null;
+  sourceTaskDueDate?: string | null;
+  sourceTaskAssigneeName?: string | null;
 }
 export interface Blocker {
   id?: string;

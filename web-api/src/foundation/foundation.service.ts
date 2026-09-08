@@ -120,26 +120,27 @@ export class FoundationService {
     const where: Prisma.ProjectWhereInput = {};
     if (query.archived === 'false') where.archivedAt = null;
     else if (query.archived === 'true') where.archivedAt = { not: null };
+    const filters: Prisma.ProjectWhereInput[] = [];
     if (query.q)
-      where.OR = [
-        { name: { contains: query.q, mode: 'insensitive' } },
-        { clientName: { contains: query.q, mode: 'insensitive' } },
-      ];
-    if (!this.isProjectManager(actor)) {
-      where.OR = [
-        { members: { some: { userId: actor.id } } },
-        { tasks: { some: { assigneeId: actor.id } } },
-      ];
-      if (query.q)
-        where.AND = [
-          {
-            OR: [
-              { name: { contains: query.q, mode: 'insensitive' } },
-              { clientName: { contains: query.q, mode: 'insensitive' } },
-            ],
-          },
-        ];
+      filters.push({
+        OR: [
+          { name: { contains: query.q, mode: 'insensitive' } },
+          { clientName: { contains: query.q, mode: 'insensitive' } },
+        ],
+      });
+    if (query.memberId) {
+      if (!this.isProjectManager(actor))
+        throw new ApiError(403, 'FORBIDDEN', 'Access is forbidden.');
+      filters.push({ members: { some: { userId: query.memberId } } });
+    } else if (!this.isProjectManager(actor)) {
+      filters.push({
+        OR: [
+          { members: { some: { userId: actor.id } } },
+          { tasks: { some: { assigneeId: actor.id } } },
+        ],
+      });
     }
+    if (filters.length) where.AND = filters;
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.project.count({ where }),
       this.prisma.project.findMany({

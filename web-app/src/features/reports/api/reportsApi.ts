@@ -76,7 +76,7 @@ export const reportsApi = baseApi.injectEndpoints({
         method: "PUT",
         body,
       }),
-      invalidatesTags: (_r, _e, { id }) => [{ type: "Reports", id }, listTag],
+      invalidatesTags: (_r, _e, { id }) => [{ type: "Reports", id }, listTag, { type: 'Dashboard', id: 'CURRENT' }, { type: 'DashboardActivity', id: 'LIST' }],
     }),
     submitReport: builder.mutation<
       SuccessResponse<ReportDto>,
@@ -91,7 +91,7 @@ export const reportsApi = baseApi.injectEndpoints({
     }),
     createCorrection: builder.mutation<SuccessResponse<ReportVersion>, string>({
       query: (id) => ({ url: `/reports/${id}/corrections`, method: "POST" }),
-      invalidatesTags: (_r, _e, id) => [{ type: "Reports", id }, listTag],
+      invalidatesTags: (_r, _e, id) => [{ type: "Reports", id }, listTag, { type: 'Dashboard', id: 'CURRENT' }],
     }),
     getCandidates: builder.query<
       PaginatedResponse<TaskCandidate>,
@@ -153,7 +153,7 @@ export const reportsApi = baseApi.injectEndpoints({
         method: "POST",
         body,
       }),
-      invalidatesTags: (_r, _e, { id }) => [{ type: "Reports", id }, listTag, complianceTag],
+      invalidatesTags: (_r, _e, { id }) => [{ type: "Reports", id }, listTag, complianceTag, { type: 'Dashboard', id: 'CURRENT' }, { type: 'DashboardActivity', id: 'LIST' }],
     }),
   }),
 });

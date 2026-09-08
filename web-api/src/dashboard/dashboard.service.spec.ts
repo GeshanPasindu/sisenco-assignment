@@ -11,7 +11,7 @@ const actor: AuthenticatedUser = {
 };
 function fixture() {
   const prisma = {
-    report: { findUnique: jest.fn() },
+    report: { findUnique: jest.fn(), findMany: jest.fn() },
     reportVersion: { findMany: jest.fn() },
     user: { findMany: jest.fn() },
   } as unknown as PrismaService;
@@ -48,6 +48,7 @@ describe('DashboardService', () => {
   it('returns an empty team dashboard for no eligible members', async () => {
     const { prisma, service } = fixture();
     jest.spyOn(prisma.user, 'findMany').mockResolvedValue([]);
+    jest.spyOn(prisma.report, 'findMany').mockResolvedValue([]);
     jest.spyOn(prisma.reportVersion, 'findMany').mockResolvedValue([]);
     const result = await service.team(
       {

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { FormFeedback } from "../../auth/components/FormFeedback";
 import { useAuth } from "../../auth/hooks/useAuth";
 import { Pagination } from "../../../components/shared/Pagination/Pagination";
-import { useGetProjectsQuery } from "../../projects/api/projectsApi";
+import { useGetTimeEntriesQuery } from "../../tasks/api/tasksApi";
 import {
   useCreateCorrectionMutation,
   useCreateReportMutation,
@@ -27,7 +27,10 @@ import type {
   TaskCandidate,
   TaskSection,
 } from "../types/report.types";
-import { editableReportSchema } from "../schemas/report.schemas";
+import {
+  editableReportSchema,
+  reportWeekSchema,
+} from "../schemas/report.schemas";
 
 const monday = (offset = 0) => {
   const date = new Date();
@@ -35,6 +38,116 @@ const monday = (offset = 0) => {
   date.setDate(date.getDate() - day + 1 + offset * 7);
   return date.toISOString().slice(0, 10);
 };
+const formatDuration = (minutes: number | null) => {
+  if (minutes === null) return "—";
+  const hours = Math.floor(minutes / 60);
+  return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`;
+};
+function KeyItem({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-950">
+      ⚑ {children}
+    </span>
+  );
+}
+function ReadOnlyReportTask({
+  task,
+  section,
+  memberId,
+}: {
+  task: ReportTask;
+  section: TaskSection;
+  memberId: string;
+}) {
+  const { user, hasPermission } = useAuth();
+  const [expanded, setExpanded] = useState(false);
+  const canReadMemberEntries =
+    user?.id === memberId || hasPermission("time:read_team");
+  const scope = user?.id === memberId ? "own" : "team";
+  const {
+    data: entries,
+    isFetching,
+    isError,
+  } = useGetTimeEntriesQuery(
+    {
+      page: 1,
+      pageSize: 100,
+      scope,
+      memberId: scope === "team" ? memberId : undefined,
+      taskId: task.sourceTaskId ?? undefined,
+    },
+    { skip: !expanded || !task.sourceTaskId || !canReadMemberEntries },
+  );
+  const timeEntries = entries?.data.data ?? [];
+  return (
+    <div className="rounded border border-slate-200 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <strong>{task.name}</strong>
+          <p className="mt-1 text-slate-600">
+            {task.projectNameSnapshot ?? "No project"} · Priority:{" "}
+            {task.priority} · Type: {task.taskType}
+            {task.status ? ` · Status: ${task.status}` : ""}
+          </p>
+          <p className="mt-1 text-slate-600">
+            Planned: {formatDuration(task.plannedMinutes)} · Actual:{" "}
+            {formatDuration(task.actualMinutes)}
+            {section === "THIS_WEEK"
+              ? ` · Progress: ${task.actualCompletionPct ?? 0}%`
+              : ` · Planned progress: ${task.plannedCompletionPct ?? 0}%`}
+          </p>
+          {task.sourceTaskDescription && (
+            <p className="mt-1 text-slate-600">Description: {task.sourceTaskDescription}</p>
+          )}
+          {(task.sourceTaskPlannedDate || task.sourceTaskDueDate || task.sourceTaskAssigneeName) && (
+            <p className="mt-1 text-slate-600">
+              {task.sourceTaskPlannedDate ? `Start: ${task.sourceTaskPlannedDate}` : ""}
+              {task.sourceTaskDueDate ? ` · Due: ${task.sourceTaskDueDate}` : ""}
+              {task.sourceTaskAssigneeName ? ` · Assignee: ${task.sourceTaskAssigneeName}` : ""}
+            </p>
+          )}
+          {task.deliverable && (
+            <p className="mt-1 text-slate-600">
+              Deliverable: {task.deliverable}
+            </p>
+          )}
+        </div>
+        {task.sourceTaskId && canReadMemberEntries && (
+          <button
+            type="button"
+            className="text-sm text-blue-700 underline"
+            onClick={() => setExpanded((value) => !value)}
+          >
+            {expanded ? "Hide time entries" : "Show time entries"}
+          </button>
+        )}
+      </div>
+      {expanded && task.sourceTaskId && canReadMemberEntries && (
+        <div className="mt-3 border-t border-slate-200 pt-3">
+          <h5 className="font-medium">Time entries</h5>
+          {isFetching ? (
+            <p className="mt-1 text-slate-500">Loading time entries…</p>
+          ) : isError ? (
+            <p className="mt-1 text-red-700">Could not load time entries.</p>
+          ) : timeEntries.length ? (
+            <ul className="mt-2 space-y-1 text-slate-600">
+              {timeEntries.map((entry) => (
+                <li key={entry.id}>
+                  {entry.workDate} · {formatDuration(entry.minutes)}
+                  {entry.note ? ` — ${entry.note}` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-1 text-slate-500">
+              No time entries were logged for this task.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 function Dialog({
   title,
   close,
@@ -63,22 +176,7 @@ function Dialog({
     </div>
   );
 }
-const blankTask = (section: TaskSection, order: number): ReportTask => ({
-  sourceTaskId: null,
-  projectId: null,
-  section,
-  name: "",
-  priority: "MEDIUM",
-  status: section === "THIS_WEEK" ? "NOT_STARTED" : null,
-  plannedCompletionPct: 0,
-  actualCompletionPct: section === "THIS_WEEK" ? 0 : null,
-  plannedMinutes: 0,
-  actualMinutes: section === "THIS_WEEK" ? 0 : null,
-  taskType: "OTHER",
-  deliverable: null,
-  displayOrder: order,
-});
-function VersionCompare({
+export function VersionCompare({
   reportId,
   versions,
 }: {
@@ -187,19 +285,51 @@ function VersionCompare({
     </section>
   );
 }
-function CandidatePicker({
+function VersionSnapshot({ version }: { version?: ReportVersion }) {
+  if (!version) return <p className="text-sm text-slate-500">Choose a version.</p>;
+  return (
+    <article className="space-y-5 text-sm">
+      <header>
+        <h3 className="text-lg font-semibold">Version {version.versionNumber}</h3>
+        <p className="mt-1 text-slate-600">{version.submittedAt ? `Submitted ${new Date(version.submittedAt).toLocaleString()}` : "Current draft"}</p>
+        {version.review?.comment && <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-950">Reviewer feedback: {version.review.comment}</p>}
+      </header>
+      {(["THIS_WEEK", "NEXT_WEEK"] as TaskSection[]).map((section) => {
+        const tasks = version.tasks.filter((task) => task.section === section);
+        return <section key={section}><h4 className="font-semibold">{section === "THIS_WEEK" ? "This week's work" : "Next week's plan"}</h4>{tasks.length ? <div className="mt-2 space-y-2">{tasks.map((task) => <div className="rounded border border-slate-200 p-3" key={task.id ?? `${task.name}-${task.displayOrder}`}><strong>{task.name}</strong><p className="mt-1 text-slate-600">{task.projectNameSnapshot ?? "No project"} · Priority: {task.priority} · Type: {task.taskType}{task.status ? ` · Status: ${task.status}` : ""}</p><p className="mt-1 text-slate-600">Planned: {formatDuration(task.plannedMinutes)} · Actual: {formatDuration(task.actualMinutes)} · {section === "THIS_WEEK" ? `Progress: ${task.actualCompletionPct ?? 0}%` : `Planned progress: ${task.plannedCompletionPct ?? 0}%`}</p>{task.deliverable && <p className="mt-1 text-slate-600">Deliverable: {task.deliverable}</p>}</div>)}</div> : <p className="mt-1 text-slate-500">No tasks recorded.</p>}</section>;
+      })}
+      <section><h4 className="font-semibold">Blockers</h4>{version.blockers.length ? <ul className="mt-2 space-y-1">{version.blockers.map((item) => <li key={item.id ?? item.description}>{item.isKey ? <KeyItem>{item.description}</KeyItem> : item.description}</li>)}</ul> : <p className="mt-1 text-slate-500">No blockers recorded.</p>}</section>
+      <section><h4 className="font-semibold">Achievements</h4>{version.achievements.length ? <ul className="mt-2 space-y-1">{version.achievements.map((item) => <li key={item.id ?? item.description}>{item.isKey ? <KeyItem>{item.description}</KeyItem> : item.description}</li>)}</ul> : <p className="mt-1 text-slate-500">No achievements recorded.</p>}</section>
+      <section><h4 className="font-semibold">Notes</h4><p className="mt-1 whitespace-pre-wrap text-slate-600">{version.notes || "No notes."}</p></section>
+    </article>
+  );
+}
+function FullScreenVersionCompare({ reportId, versions, currentVersionId, editCurrent }: { reportId: string; versions: Pick<ReportVersion, "id" | "versionNumber">[]; currentVersionId?: string; editCurrent: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [left, setLeft] = useState("");
+  const [right, setRight] = useState(currentVersionId ?? "");
+  const { data: leftResult } = useGetVersionQuery({ id: reportId, versionId: left }, { skip: !left });
+  const { data: rightResult } = useGetVersionQuery({ id: reportId, versionId: right }, { skip: !right });
+  return <><button type="button" className="mt-6 text-sm text-blue-700 underline" onClick={() => setOpen(true)}>Compare versions</button>{open && <div className="fixed inset-0 z-50 bg-slate-50" role="dialog" aria-modal="true" aria-label="Compare report versions"><header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4"><div><h2 className="text-xl font-semibold">Compare report versions</h2><p className="text-sm text-slate-600">Review complete report details side by side.</p></div><button type="button" className="button-secondary px-4" onClick={() => setOpen(false)}>Close</button></header><div className="grid h-[calc(100vh-89px)] gap-4 overflow-auto p-5 lg:grid-cols-2"><section className="rounded border border-slate-200 bg-white p-5"><label className="form-label">Version to compare<select className="form-input mt-1 px-3" value={left} onChange={(event) => setLeft(event.target.value)}><option value="">Select a version</option>{versions.map((version) => <option key={version.id} value={version.id}>Version {version.versionNumber}</option>)}</select></label><div className="mt-5"><VersionSnapshot version={leftResult?.data} /></div></section><section className="rounded border border-blue-200 bg-white p-5"><label className="form-label">Current or later version<select className="form-input mt-1 px-3" value={right} onChange={(event) => setRight(event.target.value)}><option value="">Select a version</option>{versions.map((version) => <option key={version.id} value={version.id}>Version {version.versionNumber}{version.id === currentVersionId ? " (current)" : ""}</option>)}</select></label>{right === currentVersionId && <button type="button" className="mt-3 text-sm text-blue-700 underline" onClick={() => { setOpen(false); editCurrent() }}>Edit current edition</button>}<div className="mt-5"><VersionSnapshot version={rightResult?.data} /></div></section></div></div>}</>;
+}
+function CandidateList({
   report,
   version,
-  close,
+  section,
   applied,
 }: {
   report: ReportDto;
   version: ReportVersion;
-  close: () => void;
+  section: TaskSection;
   applied: () => void;
 }) {
-  const [section, setSection] = useState<TaskSection>("THIS_WEEK");
-  const { data, isLoading } = useGetCandidatesQuery({ id: report.id, section });
+  const [showAll, setShowAll] = useState(false);
+  const { data, isLoading } = useGetCandidatesQuery({
+    id: report.id,
+    section,
+    page: 1,
+    pageSize: showAll ? 100 : 5,
+  });
   const [importTasks, state] = useImportTasksMutation();
   const candidates = data?.data.data ?? [];
   const add = (candidate: TaskCandidate) =>
@@ -213,37 +343,20 @@ function CandidatePicker({
       .unwrap()
       .then(() => {
         applied();
-        close();
       })
       .catch(() => undefined);
   return (
-    <Dialog title="Add assigned tasks" close={close}>
-      <div className="mb-4 flex gap-2">
-        <button
-          className={
-            section === "THIS_WEEK"
-              ? "button-primary px-3"
-              : "button-secondary px-3"
-          }
-          onClick={() => setSection("THIS_WEEK")}
-        >
-          This week
-        </button>
-        <button
-          className={
-            section === "NEXT_WEEK"
-              ? "button-primary px-3"
-              : "button-secondary px-3"
-          }
-          onClick={() => setSection("NEXT_WEEK")}
-        >
-          Next week
-        </button>
-      </div>
+    <section className="rounded border border-slate-200 p-4">
+      <h4 className="font-semibold">
+        {section === "THIS_WEEK" ? "This Week’s Work" : "Next Week’s Plan"}
+      </h4>
+      <p className="mt-1 text-sm text-slate-600">
+        Tasks assigned to you that overlap this reporting period.
+      </p>
       {isLoading && <p className="text-sm text-slate-500">Loading tasks…</p>}
       {!isLoading && candidates.length === 0 && (
         <p className="rounded border border-slate-200 p-4 text-sm text-slate-600">
-          No assigned tasks are planned for this week.{" "}
+          No assigned tasks overlap this reporting week.{" "}
           <Link to="/tasks" className="text-blue-700 underline">
             Create a task
           </Link>
@@ -272,11 +385,84 @@ function CandidatePicker({
           </div>
         ))}
       </div>
+      {!isLoading && !showAll && (data?.data.pagination.total ?? 0) > 5 && (
+        <button
+          type="button"
+          className="mt-3 text-sm text-blue-700 underline"
+          onClick={() => setShowAll(true)}
+        >
+          More qualified tasks ({data!.data.pagination.total - 5})
+        </button>
+      )}
       {state.isError && (
         <div className="mt-3">
           <FormFeedback>Could not add the selected task.</FormFeedback>
         </div>
       )}
+    </section>
+  );
+}
+function RequestChangesDialog({
+  reportId,
+  versionId,
+  close,
+}: {
+  reportId: string;
+  versionId: string;
+  close: () => void;
+}) {
+  const [comment, setComment] = useState("");
+  const [review, state] = useReviewReportMutation();
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!comment.trim()) return;
+    void review({
+      id: reportId,
+      versionId,
+      decision: "CHANGES_REQUESTED",
+      comment: comment.trim(),
+    })
+      .unwrap()
+      .then(close)
+      .catch(() => undefined);
+  };
+  return (
+    <Dialog title="Request report changes" close={close}>
+      <form className="grid gap-4" onSubmit={submit}>
+        <p className="text-sm text-slate-600">
+          Explain what the member needs to correct. This feedback will be shown
+          with their correction draft.
+        </p>
+        <label className="form-label">
+          Feedback
+          <textarea
+            required
+            className="form-input mt-1 min-h-28 px-3 py-2"
+            value={comment}
+            onChange={(event) => setComment(event.target.value)}
+          />
+        </label>
+        {state.isError && (
+          <FormFeedback>
+            Could not request changes. Please try again.
+          </FormFeedback>
+        )}
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            className="button-secondary px-4"
+            onClick={close}
+          >
+            Cancel
+          </button>
+          <button
+            className="button-primary px-4"
+            disabled={state.isLoading || !comment.trim()}
+          >
+            {state.isLoading ? "Sending…" : "Request changes"}
+          </button>
+        </div>
+      </form>
     </Dialog>
   );
 }
@@ -286,14 +472,12 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
   const [save, saveState] = useSaveReportMutation();
   const [submit, submitState] = useSubmitReportMutation();
   const [createCorrection, correctionState] = useCreateCorrectionMutation();
-  const [picker, setPicker] = useState(false);
   const [draft, setDraft] = useState<ReportVersion | null>(null);
   const [notes, setNotes] = useState("");
   const [tasks, setTasks] = useState<ReportTask[]>([]);
   const [blockers, setBlockers] = useState<Blocker[]>([]);
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [validationError, setValidationError] = useState<string | null>(null);
-  const { data: projects } = useGetProjectsQuery({ page: 1, pageSize: 100 });
   useEffect(() => {
     const content = data?.data.content;
     if (content) {
@@ -328,13 +512,16 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
   const editable =
     report.status === "DRAFT" || report.status === "NEEDS_CORRECTION";
   const editableDraft = draft && !draft.submittedAt ? draft : null;
+  const totalActualMinutes = tasks.reduce(
+    (total, task) => total + (task.actualMinutes ?? 0),
+    0,
+  );
+  const thisWeekTasks = tasks.filter((task) => task.section === "THIS_WEEK");
+  const nextWeekTasks = tasks.filter((task) => task.section === "NEXT_WEEK");
+  const groupedTasks = [...thisWeekTasks, ...nextWeekTasks];
   const apply = () => void refetch();
   const reindex = (items: ReportTask[]) =>
     items.map((task, index) => ({ ...task, displayOrder: index }));
-  const updateTask = (index: number, changes: Partial<ReportTask>) =>
-    setTasks((items) =>
-      items.map((item, i) => (i === index ? { ...item, ...changes } : item)),
-    );
   const setKey = <T extends Blocker | Achievement>(
     setItems: React.Dispatch<React.SetStateAction<T[]>>,
     index: number,
@@ -366,7 +553,10 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
     };
     const validation = editableReportSchema.safeParse(payload);
     if (!validation.success) {
-      setValidationError(validation.error.issues[0]?.message ?? "Please correct the report fields.");
+      setValidationError(
+        validation.error.issues[0]?.message ??
+          "Please correct the report fields.",
+      );
       return;
     }
     setValidationError(null);
@@ -402,9 +592,117 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
         </div>
       )}
       {!editable && (
-        <p className="rounded border border-slate-200 p-4 text-sm text-slate-600">
-          This report is not currently editable.
-        </p>
+        <section className="space-y-5 rounded border border-slate-200 p-5 text-sm">
+          {report.content ? (
+            <>
+              <div className="flex flex-wrap justify-between gap-2">
+                <h3 className="font-semibold">
+                  Submitted report — Version {report.content.versionNumber}
+                </h3>
+                <strong>
+                  Total actual time:{" "}
+                  {formatDuration(
+                    report.content.tasks.reduce(
+                      (total, task) => total + (task.actualMinutes ?? 0),
+                      0,
+                    ),
+                  )}
+                </strong>
+              </div>
+              {(["THIS_WEEK", "NEXT_WEEK"] as TaskSection[]).map((section) => {
+                const sectionTasks = report.content!.tasks.filter(
+                  (task) => task.section === section,
+                );
+                return (
+                  <div key={section}>
+                    <h4 className="mb-2 font-semibold">
+                      {section === "THIS_WEEK"
+                        ? "This Week’s Work"
+                        : "Next Week’s Tasks"}
+                    </h4>
+                    {sectionTasks.length ? (
+                      <div className="space-y-2">
+                        {sectionTasks.map((task) => (
+                          <div className="contents" key={task.id}>
+                          <ReadOnlyReportTask
+                            task={task}
+                            section={section}
+                            memberId={report.member.id}
+                          />
+                          <div
+                            className="hidden"
+                          >
+                            <strong>{task.name}</strong>
+                            <p className="mt-1 text-slate-600">
+                              {task.projectNameSnapshot ?? "No project"} ·
+                              Priority: {task.priority} · Type: {task.taskType}
+                              {task.status ? ` · Status: ${task.status}` : ""}
+                            </p>
+                            <p className="mt-1 text-slate-600">
+                              Planned: {formatDuration(task.plannedMinutes)} ·
+                              Actual: {formatDuration(task.actualMinutes)}
+                              {section === "THIS_WEEK"
+                                ? ` · Progress: ${task.actualCompletionPct ?? 0}%`
+                                : ` · Planned progress: ${task.plannedCompletionPct ?? 0}%`}
+                            </p>
+                            {task.deliverable && (
+                              <p className="mt-1 text-slate-600">
+                                Deliverable: {task.deliverable}
+                              </p>
+                            )}
+                          </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-slate-500">No tasks recorded.</p>
+                    )}
+                  </div>
+                );
+              })}
+              <div>
+                <h4 className="font-semibold">Blockers</h4>
+                {report.content.blockers.length ? (
+                  <ul className="mt-1 list-disc pl-5">
+                    {report.content.blockers.map((item) => (
+                      <li key={item.id}>
+                        {item.isKey ? <KeyItem>{item.description}</KeyItem> : item.description}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-slate-500">No blockers recorded.</p>
+                )}
+              </div>
+              <div>
+                <h4 className="font-semibold">Achievements</h4>
+                {report.content.achievements.length ? (
+                  <ul className="mt-1 list-disc pl-5">
+                    {report.content.achievements.map((item) => (
+                      <li key={item.id}>
+                        {item.isKey ? <KeyItem>{item.description}</KeyItem> : item.description}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1 text-slate-500">
+                    No achievements recorded.
+                  </p>
+                )}
+              </div>
+              <div>
+                <h4 className="font-semibold">Notes</h4>
+                <p className="mt-1 whitespace-pre-wrap text-slate-600">
+                  {report.content.notes || "No notes."}
+                </p>
+              </div>
+            </>
+          ) : (
+            <p className="text-slate-600">
+              No submitted report content is available.
+            </p>
+          )}
+        </section>
       )}
       {editable && !editableDraft && (
         <div className="rounded border border-slate-200 p-4 text-sm">
@@ -424,99 +722,76 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
         </div>
       )}
       {editable && editableDraft && (
-        <>
-          <div className="mb-4 flex justify-between">
+        <div id="current-edition">
+          <div className="mb-4">
             <p className="text-sm text-slate-600">
               Editing version {editableDraft.versionNumber}
             </p>
-            <button
-              className="button-secondary px-3"
-              onClick={() => setPicker(true)}
-            >
-              Add assigned task
-            </button>
+          </div>
+          <div className="mb-5 grid gap-4 lg:grid-cols-2">
+            <CandidateList
+              report={report}
+              version={editableDraft}
+              section="THIS_WEEK"
+              applied={apply}
+            />
+            <CandidateList
+              report={report}
+              version={editableDraft}
+              section="NEXT_WEEK"
+              applied={apply}
+            />
+          </div>
+          <div className="mb-2 flex justify-between text-sm text-slate-600">
+            <span>Added report tasks</span>
+            <strong>
+              Total actual time: {formatDuration(totalActualMinutes)}
+            </strong>
           </div>
           <div className="space-y-3">
-            {tasks.map((task, index) => (
+            {groupedTasks.map((task, index) => (
               <div
                 key={task.id ?? `new-${index}`}
-                className="grid gap-2 rounded border border-slate-200 p-3 md:grid-cols-6"
+                className="flex flex-wrap items-start justify-between gap-3 rounded border border-slate-200 p-4 text-sm"
               >
-                <select
-                  className="form-input px-2 md:col-span-2"
-                  aria-label={`Task ${index + 1} project`}
-                  value={task.projectId ?? ""}
-                  onChange={(e) => updateTask(index, { projectId: e.target.value || null })}
-                >
-                  <option value="">Choose an assigned project</option>
-                  {(projects?.data.data ?? []).map((project) => (
-                    <option key={project.id} value={project.id}>{project.name}</option>
-                  ))}
-                </select>
-                <input
-                  className="form-input px-2 md:col-span-2"
-                  aria-label={`Task ${index + 1} name`}
-                  value={task.name}
-                  onChange={(e) => updateTask(index, { name: e.target.value })}
-                />
-                <select
-                  className="form-input px-2"
-                  value={task.section}
-                  onChange={(e) => {
-                    const section = e.target.value as TaskSection;
-                    updateTask(index, section === "NEXT_WEEK"
-                      ? { section, status: null, actualCompletionPct: null, actualMinutes: null }
-                      : { section, status: "NOT_STARTED", actualCompletionPct: 0, actualMinutes: 0 });
-                  }}
-                >
-                  <option value="THIS_WEEK">This week</option>
-                  <option value="NEXT_WEEK">Next week</option>
-                </select>
-                <select
-                  className="form-input px-2"
-                  value={task.status ?? ""}
-                  disabled={task.section === "NEXT_WEEK"}
-                  onChange={(e) =>
-                    setTasks((items) =>
-                      items.map((item, i) =>
-                        i === index
-                          ? {
-                              ...item,
-                              status: (e.target.value ||
-                                null) as ReportTask["status"],
-                            }
-                          : item,
-                      ),
-                    )
-                  }
-                >
-                  <option value="">No status</option>
-                  {["NOT_STARTED", "IN_PROGRESS", "COMPLETED", "BLOCKED"].map(
-                    (value) => (
-                      <option key={value}>{value}</option>
-                    ),
+                {(index === 0 ||
+                  task.section !== groupedTasks[index - 1].section) && (
+                  <h4 className="w-full border-b border-slate-200 pb-2 font-semibold text-slate-900">
+                    {task.section === "THIS_WEEK"
+                      ? "This Week’s Work"
+                      : "Next Week’s Tasks"}
+                  </h4>
+                )}
+                <div>
+                  <strong>{task.name}</strong>
+                  <p className="mt-1 text-slate-600">
+                    {task.projectNameSnapshot ?? "No project"} ·{" "}
+                    {task.section === "THIS_WEEK"
+                      ? "This week’s work"
+                      : "Next week’s plan"}
+                  </p>
+                  <p className="mt-1 text-slate-600">
+                    Priority: {task.priority} · Type: {task.taskType}
+                    {task.status ? ` · Status: ${task.status}` : ""}
+                  </p>
+                  <p className="mt-1 text-slate-600">
+                    Planned: {formatDuration(task.plannedMinutes)} · Actual:{" "}
+                    {formatDuration(task.actualMinutes)}
+                    {task.section === "THIS_WEEK"
+                      ? ` · Progress: ${task.actualCompletionPct ?? 0}%`
+                      : ` · Planned progress: ${task.plannedCompletionPct ?? 0}%`}
+                  </p>
+                  {task.deliverable && (
+                    <p className="mt-1 text-slate-600">
+                      Deliverable: {task.deliverable}
+                    </p>
                   )}
-                </select>
-                <input
-                  type="number"
-                  className="form-input px-2"
-                  value={task.section === "THIS_WEEK" ? task.actualCompletionPct ?? "" : task.plannedCompletionPct ?? ""}
-                  placeholder={task.section === "THIS_WEEK" ? "Actual %" : "Planned %"}
-                  onChange={(e) =>
-                    setTasks((items) =>
-                      items.map((item, i) =>
-                        i === index ? task.section === "THIS_WEEK"
-                          ? { ...item, actualCompletionPct: e.target.value === "" ? null : Number(e.target.value) }
-                          : { ...item, plannedCompletionPct: e.target.value === "" ? null : Number(e.target.value) }
-                          : item,
-                      ),
-                    )
-                  }
-                />
+                </div>
                 <button
+                  type="button"
                   className="text-red-700"
                   onClick={() =>
-                    setTasks((items) => items.filter((_, i) => i !== index))
+                    setTasks((items) => items.filter((item) => item !== task))
                   }
                 >
                   Remove
@@ -524,28 +799,6 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
               </div>
             ))}
           </div>
-          <button
-            className="mt-3 text-sm text-blue-700 underline"
-            onClick={() =>
-              setTasks((items) => [
-                ...items,
-                blankTask("THIS_WEEK", items.length),
-              ])
-            }
-          >
-            Add this-week task
-          </button>
-          <button
-            className="ml-4 text-sm text-blue-700 underline"
-            onClick={() =>
-              setTasks((items) => [
-                ...items,
-                blankTask("NEXT_WEEK", items.length),
-              ])
-            }
-          >
-            Add next-week plan
-          </button>
           <section className="mt-5 rounded border border-slate-200 p-4">
             <h4 className="font-semibold">Blockers</h4>
             {blockers.map((item, index) => (
@@ -554,13 +807,51 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
                   className="form-input min-w-0 flex-1 px-2"
                   value={item.description}
                   placeholder="Describe a blocker"
-                  onChange={(e) => setBlockers((items) => items.map((current, i) => i === index ? { ...current, description: e.target.value } : current))}
+                  onChange={(e) =>
+                    setBlockers((items) =>
+                      items.map((current, i) =>
+                        i === index
+                          ? { ...current, description: e.target.value }
+                          : current,
+                      ),
+                    )
+                  }
                 />
-                <button type="button" className="text-blue-700" onClick={() => setKey(setBlockers, index)}>{item.isKey ? "Key" : "Mark key"}</button>
-                <button type="button" className="text-red-700" onClick={() => setBlockers((items) => items.filter((_, i) => i !== index))}>Remove</button>
+                <button
+                  type="button"
+                  className="text-blue-700"
+                  onClick={() => setKey(setBlockers, index)}
+                >
+                  {item.isKey ? "Flagged" : "Flag"}
+                </button>
+                <button
+                  type="button"
+                  className="text-red-700"
+                  onClick={() =>
+                    setBlockers((items) => items.filter((_, i) => i !== index))
+                  }
+                >
+                  Remove
+                </button>
               </div>
             ))}
-            <button type="button" className="mt-3 text-sm text-blue-700 underline" onClick={() => setBlockers((items) => [...items, { description: "", isKey: false, status: "OPEN", displayOrder: items.length }])}>Add blocker</button>
+            <button
+              type="button"
+              className="mt-3 text-sm text-blue-700 underline"
+              onClick={() =>
+                setBlockers((items) => [
+                  ...items,
+                  {
+                    description: "",
+                    isKey: false,
+                    status: "OPEN",
+                    displayOrder: items.length,
+                  },
+                ])
+              }
+            >
+              Add blocker
+            </button>
           </section>
           <section className="mt-4 rounded border border-slate-200 p-4">
             <h4 className="font-semibold">Achievements</h4>
@@ -570,13 +861,48 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
                   className="form-input min-w-0 flex-1 px-2"
                   value={item.description}
                   placeholder="Describe an achievement"
-                  onChange={(e) => setAchievements((items) => items.map((current, i) => i === index ? { ...current, description: e.target.value } : current))}
+                  onChange={(e) =>
+                    setAchievements((items) =>
+                      items.map((current, i) =>
+                        i === index
+                          ? { ...current, description: e.target.value }
+                          : current,
+                      ),
+                    )
+                  }
                 />
-                <button type="button" className="text-blue-700" onClick={() => setKey(setAchievements, index)}>{item.isKey ? "Key" : "Mark key"}</button>
-                <button type="button" className="text-red-700" onClick={() => setAchievements((items) => items.filter((_, i) => i !== index))}>Remove</button>
+                <button
+                  type="button"
+                  className="text-blue-700"
+                  onClick={() => setKey(setAchievements, index)}
+                >
+                  {item.isKey ? "Flagged" : "Flag"}
+                </button>
+                <button
+                  type="button"
+                  className="text-red-700"
+                  onClick={() =>
+                    setAchievements((items) =>
+                      items.filter((_, i) => i !== index),
+                    )
+                  }
+                >
+                  Remove
+                </button>
               </div>
             ))}
-            <button type="button" className="mt-3 text-sm text-blue-700 underline" onClick={() => setAchievements((items) => [...items, { description: "", isKey: false, displayOrder: items.length }])}>Add achievement</button>
+            <button
+              type="button"
+              className="mt-3 text-sm text-blue-700 underline"
+              onClick={() =>
+                setAchievements((items) => [
+                  ...items,
+                  { description: "", isKey: false, displayOrder: items.length },
+                ])
+              }
+            >
+              Add achievement
+            </button>
           </section>
           <label className="form-label mt-5 block">
             Notes
@@ -603,24 +929,19 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
             <button
               className="button-primary px-4"
               disabled={saveState.isLoading || submitState.isLoading}
-              onClick={() => {
-                if (window.confirm("Submit this report? It will become read-only.")) saveDraft(true);
-              }}
+              onClick={() => saveDraft(true)}
             >
               {submitState.isLoading ? "Submitting…" : "Submit report"}
             </button>
           </div>
-        </>
+        </div>
       )}
       {versions && (
-        <VersionCompare reportId={report.id} versions={versions.data.data} />
-      )}
-      {picker && editableDraft && (
-        <CandidatePicker
-          report={report}
-          version={editableDraft}
-          close={() => setPicker(false)}
-          applied={apply}
+        <FullScreenVersionCompare
+          reportId={report.id}
+          versions={versions.data.data}
+          currentVersionId={editableDraft?.id}
+          editCurrent={() => document.getElementById("current-edition")?.scrollIntoView({ behavior: "smooth", block: "start" })}
         />
       )}
     </Dialog>
@@ -632,6 +953,13 @@ export function ReportsPage() {
   const [scope, setScope] = useState<"own" | "team">("own");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string | null>(null);
+  const [requestChanges, setRequestChanges] = useState<{
+    reportId: string;
+    versionId: string;
+  } | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [weekStart, setWeekStart] = useState(monday());
+  const [weekError, setWeekError] = useState<string | null>(null);
   const { data, isLoading, isFetching } = useGetReportsQuery({
     page,
     pageSize: 20,
@@ -641,12 +969,23 @@ export function ReportsPage() {
   const [deleteDraft, deleteDraftState] = useDeleteDraftReportMutation();
   const [review, reviewState] = useReviewReportMutation();
   const reports = data?.data.data ?? [];
-  const createFor = (weekStart: string) =>
-    void create({ weekStart })
+  const createFor = (selectedWeek: string) => {
+    const validation = reportWeekSchema.safeParse(selectedWeek);
+    if (!validation.success) {
+      setWeekError("Choose a Monday as the reporting week start.");
+      return;
+    }
+    setWeekError(null);
+    void create({ weekStart: validation.data })
       .unwrap()
-      .then((result) => setSelected(result.data.id))
+      .then((result) => {
+        setCreateOpen(false);
+        setSelected(result.data.id);
+      })
       .catch(() => undefined);
+  };
   const canReview = hasPermission("report:review");
+  const canCreate = hasPermission("report:create");
   return (
     <section>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
@@ -656,22 +995,14 @@ export function ReportsPage() {
             Draft, submit, and revise your weekly work report.
           </p>
         </div>
-        <div className="flex gap-2">
+        {canCreate && (
           <button
-            disabled={createState.isLoading}
-            className="button-secondary px-3"
-            onClick={() => createFor(monday())}
+            className="button-primary px-4"
+            onClick={() => setCreateOpen(true)}
           >
-            Current week
+            Create report
           </button>
-          <button
-            disabled={createState.isLoading}
-            className="button-primary px-3"
-            onClick={() => createFor(monday(1))}
-          >
-            Next week
-          </button>
-        </div>
+        )}
       </div>
       {team && (
         <div className="mb-4 flex gap-2">
@@ -709,7 +1040,7 @@ export function ReportsPage() {
       {isLoading && <p className="text-sm text-slate-500">Loading reports…</p>}
       {reports.length === 0 && !isLoading && (
         <div className="rounded-md border border-slate-200 bg-white p-6 text-sm text-slate-600">
-          No reports yet. Create your report for the current or next week.
+          No reports yet. Create a report for any reporting week.
         </div>
       )}
       {reports.length > 0 && (
@@ -751,7 +1082,11 @@ export function ReportsPage() {
                         className="ml-3 text-red-700"
                         disabled={deleteDraftState.isLoading}
                         onClick={() => {
-                          if (window.confirm("Delete this unsubmitted draft? This cannot be undone.")) {
+                          if (
+                            window.confirm(
+                              "Delete this unsubmitted draft? This cannot be undone.",
+                            )
+                          ) {
                             void deleteDraft(report.id);
                           }
                         }}
@@ -780,18 +1115,12 @@ export function ReportsPage() {
                           <button
                             className="ml-3 text-amber-700"
                             disabled={reviewState.isLoading}
-                            onClick={() => {
-                              const comment = window.prompt(
-                                "Explain the requested changes",
-                              );
-                              if (comment)
-                                void review({
-                                  id: report.id,
-                                  versionId: report.latestSubmittedVersionId!,
-                                  decision: "CHANGES_REQUESTED",
-                                  comment,
-                                });
-                            }}
+                            onClick={() =>
+                              setRequestChanges({
+                                reportId: report.id,
+                                versionId: report.latestSubmittedVersionId!,
+                              })
+                            }
                           >
                             Request changes
                           </button>
@@ -815,6 +1144,60 @@ export function ReportsPage() {
       )}
       {selected && (
         <ReportEditor id={selected} close={() => setSelected(null)} />
+      )}
+      {createOpen && (
+        <Dialog title="Create weekly report" close={() => setCreateOpen(false)}>
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createFor(weekStart);
+            }}
+          >
+            <p className="text-sm text-slate-600">
+              Select the Monday that starts the reporting week. Past and future
+              weeks are supported.
+            </p>
+            <label className="form-label">
+              Reporting week
+              <input
+                required
+                type="date"
+                className="form-input mt-1 px-3"
+                value={weekStart}
+                onChange={(event) => setWeekStart(event.target.value)}
+              />
+            </label>
+            {(weekError || createState.isError) && (
+              <FormFeedback>
+                {weekError ??
+                  "A report already exists for that week or it could not be created."}
+              </FormFeedback>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                className="button-secondary px-4"
+                onClick={() => setCreateOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                disabled={createState.isLoading}
+                className="button-primary px-4"
+              >
+                {createState.isLoading ? "Creating…" : "Create report"}
+              </button>
+            </div>
+          </form>
+        </Dialog>
+      )}
+      {requestChanges && (
+        <RequestChangesDialog
+          reportId={requestChanges.reportId}
+          versionId={requestChanges.versionId}
+          close={() => setRequestChanges(null)}
+        />
       )}
     </section>
   );

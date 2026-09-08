@@ -17,7 +17,10 @@ export function createNotificationSocket(apiBaseUrl: string, accessToken: string
     reconnectionDelay: 500,
     reconnectionDelayMax: 8_000,
     randomizationFactor: 0.4,
-    transports: ['websocket', 'polling'],
+    // Start with polling so Socket.IO can establish a connection in restrictive
+    // development networks, then upgrade to WebSocket when it is available.
+    transports: ['polling', 'websocket'],
+    tryAllTransports: true,
   })
   return socket
 }

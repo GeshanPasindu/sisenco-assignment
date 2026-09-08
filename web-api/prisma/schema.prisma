@@ -352,6 +352,10 @@ model ReportTask {
   id                   String       @id @default(uuid()) @db.Uuid
   reportVersionId      String       @map("report_version_id") @db.Uuid
   sourceTaskId         String?      @map("source_task_id") @db.Uuid
+  sourceTaskDescription String?     @map("source_task_description") @db.Text
+  sourceTaskPlannedDate DateTime?   @map("source_task_planned_date") @db.Date
+  sourceTaskDueDate     DateTime?   @map("source_task_due_date") @db.Date
+  sourceTaskAssigneeName String?    @map("source_task_assignee_name") @db.VarChar(201)
   projectId            String?      @map("project_id") @db.Uuid
   projectNameSnapshot  String?      @map("project_name_snapshot") @db.VarChar(150)
   section              TaskSection

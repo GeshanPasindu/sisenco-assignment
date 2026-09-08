@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Max,
   MaxLength,
   Min,
@@ -25,6 +26,7 @@ export class ProjectsQueryDto {
   @IsOptional() @IsIn(['false', 'true', 'all']) archived:
     'false' | 'true' | 'all' = 'false';
   @IsOptional() @IsString() @MaxLength(100) q?: string;
+  @IsOptional() @IsUUID() memberId?: string;
 }
 export class CreateProjectDto {
   @ApiProperty({ maxLength: 150 }) @IsString() @MaxLength(150) name!: string;

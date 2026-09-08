@@ -4,6 +4,7 @@ import { useAppDispatch } from '../../../app/hooks'
 import { env } from '../../../config/env'
 import { useAuth } from '../../auth/hooks/useAuth'
 import { notificationsApi } from '../api/notificationsApi'
+import { dashboardApi } from '../../dashboard/api/dashboardApi'
 import { createNotificationSocket, type NotificationSocket } from '../services/notificationSocket'
 import type { NotificationDto } from '../types/notification.types'
 
@@ -46,15 +47,27 @@ export function NotificationsProvider({ children }: PropsWithChildren) {
         draft.data.pagination.hasMore = draft.data.pagination.totalPages > 1
       }))
       dispatch(notificationsApi.util.invalidateTags([{ type: 'UnreadNotifications', id: 'COUNT' }, { type: 'Notifications', id: 'LIST' }]))
+      if (['REPORT_SUBMITTED', 'REPORT_RESUBMITTED', 'REPORT_APPROVED', 'REPORT_NEEDS_CORRECTION'].includes(payload.type)) {
+        dispatch(dashboardApi.util.invalidateTags([{ type: 'Dashboard', id: 'CURRENT' }, { type: 'DashboardActivity', id: 'LIST' }]))
+      }
     }
     socket.on('connect', () => { setStatus('CONNECTED'); reconcile() })
     socket.on('reconnect', () => { setStatus('CONNECTED'); reconcile() })
     socket.on('disconnect', () => setStatus('RECONNECTING'))
     socket.on('notification.created', onNotification)
+    const refreshOnFocus = () => {
+      if (document.visibilityState === 'visible') reconcile()
+    }
+    const refreshTimer = window.setInterval(reconcile, 15_000)
+    window.addEventListener('focus', refreshOnFocus)
+    document.addEventListener('visibilitychange', refreshOnFocus)
 
     return () => {
       socket.off('connect'); socket.off('reconnect'); socket.off('disconnect'); socket.off('notification.created')
       socket.disconnect()
+      window.clearInterval(refreshTimer)
+      window.removeEventListener('focus', refreshOnFocus)
+      document.removeEventListener('visibilitychange', refreshOnFocus)
       if (socketRef.current === socket) socketRef.current = null
     }
   }, [accessToken, dispatch, isAuthenticated])

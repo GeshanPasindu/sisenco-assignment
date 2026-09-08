@@ -70,7 +70,7 @@ export class DashboardService {
           include: {
             tasks: {
               select: { status: true, actualMinutes: true },
-              where: { status: { not: null } },
+              where: { status: { not: null }, section: 'THIS_WEEK' },
             },
             blockers: { select: { status: true } },
           },
@@ -106,15 +106,20 @@ export class DashboardService {
         },
       },
       include: {
-        report: { select: { weekStart: true } },
-        tasks: { where: { status: 'COMPLETED' }, select: { id: true } },
+        report: { select: { id: true, weekStart: true } },
+        tasks: { where: { status: 'COMPLETED', section: 'THIS_WEEK' }, select: { id: true } },
       },
     });
+    const latestTrendVersions = new Map<string, (typeof versions)[number]>();
+    for (const version of versions) {
+      const previous = latestTrendVersions.get(version.report.id);
+      if (!previous || version.submittedAt! > previous.submittedAt!) latestTrendVersions.set(version.report.id, version);
+    }
     const trend = trendWeeks.map((w) => {
       const key = dateOnly(w);
       return {
         weekStart: key,
-        completedTasks: versions
+        completedTasks: Array.from(latestTrendVersions.values())
           .filter((v) => dateOnly(v.report.weekStart) === key)
           .reduce((s, v) => s + v.tasks.length, 0),
       };
@@ -138,7 +143,6 @@ export class DashboardService {
     return this.prisma.user.findMany({
       where: {
         activatedAt: { not: null },
-        deactivatedAt: null,
         role: { code: 'TEAM_MEMBER', deletedAt: null },
         reportingPeriods: {
           some: {
@@ -158,7 +162,6 @@ export class DashboardService {
             versions: {
               where: { submittedAt: { not: null } },
               orderBy: { submittedAt: 'desc' },
-              take: 1,
               include: {
                 tasks: {
                   select: {
@@ -168,7 +171,7 @@ export class DashboardService {
                     taskType: true,
                     project: { select: { id: true, name: true } },
                   },
-                  where: { status: { not: null } },
+                  where: { status: { not: null }, section: 'THIS_WEEK' },
                 },
                 blockers: { select: { status: true } },
               },
@@ -183,9 +186,10 @@ export class DashboardService {
     const eligible = await this.eligible(week, q.memberId);
     const reportRows = eligible.map((u) => {
       const r = u.reports[0];
-      const v = r?.versions[0];
-      const timing = v?.submittedAt
-        ? v.submittedAt <= deadline(week)
+      const latest = r?.versions[0];
+      const firstSubmittedAt = r?.versions.reduce<Date | undefined>((first, version) => !first || version.submittedAt! < first ? version.submittedAt! : first, undefined);
+      const timing = firstSubmittedAt
+        ? firstSubmittedAt <= deadline(week)
           ? 'ON_TIME'
           : 'LATE'
         : new Date() > deadline(week)
@@ -198,7 +202,7 @@ export class DashboardService {
         reportState: r?.status ?? 'NOT_STARTED',
         submissionTiming: timing,
         deadlineAt: deadline(week).toISOString(),
-        firstSubmittedAt: v?.submittedAt?.toISOString() ?? null,
+        firstSubmittedAt: firstSubmittedAt?.toISOString() ?? null,
       };
     });
     const submitted = reportRows.filter((r) => r.firstSubmittedAt);
@@ -212,14 +216,46 @@ export class DashboardService {
     const overdue = reportRows.filter(
       (r) => r.submissionTiming === 'OVERDUE',
     ).length;
-    const versionIds = eligible.flatMap(
-      (u) => u.reports[0]?.versions[0]?.id ?? [],
-    );
+    // Charts are report analytics, rather than compliance analytics.  A
+    // submitted report must remain visible even when its member has no
+    // reporting-period record (for example, a legacy/optional report).
+    const submittedReports = await this.prisma.report.findMany({
+      where: {
+        weekStart: week,
+        ...(q.memberId ? { memberId: q.memberId } : {}),
+        versions: { some: { submittedAt: { not: null } } },
+      },
+      select: {
+        id: true,
+        status: true,
+        member: { select: { id: true, firstName: true, lastName: true } },
+        versions: {
+          where: { submittedAt: { not: null } },
+          orderBy: { submittedAt: 'desc' },
+          select: { id: true, submittedAt: true },
+        },
+      },
+    });
+    for (const report of submittedReports) {
+      if (reportRows.some((row) => row.member.id === report.member.id)) continue;
+      const firstSubmittedAt = report.versions.at(-1)?.submittedAt ?? null;
+      reportRows.push({
+        member: person(report.member),
+        weekStart: dateOnly(week),
+        reportId: report.id,
+        reportState: report.status,
+        submissionTiming: firstSubmittedAt && firstSubmittedAt <= deadline(week) ? 'ON_TIME' : 'LATE',
+        deadlineAt: deadline(week).toISOString(),
+        firstSubmittedAt: firstSubmittedAt?.toISOString() ?? null,
+      });
+    }
+    const versionIds = submittedReports.flatMap((report) => report.versions[0]?.id ?? []);
     const versions = await this.prisma.reportVersion.findMany({
       where: { id: { in: versionIds } },
       include: {
+        blockers: { select: { status: true } },
         tasks: {
-          where: q.projectId ? { projectId: q.projectId } : undefined,
+          where: { section: 'THIS_WEEK', ...(q.projectId ? { projectId: q.projectId } : {}) },
           select: {
             status: true,
             projectId: true,
@@ -238,13 +274,11 @@ export class DashboardService {
     const timeByType = new Map<string, number>();
     for (const v of versions)
       for (const t of v.tasks) {
-        if (t.status === 'COMPLETED') {
-          const id = t.projectId ?? 'none';
-          const name = t.project?.name ?? t.projectNameSnapshot ?? 'Unassigned';
-          const item = tasksByProjectMap.get(id) ?? { id, name, count: 0 };
-          item.count++;
-          tasksByProjectMap.set(id, item);
-        }
+        const id = t.projectId ?? 'none';
+        const name = t.project?.name ?? t.projectNameSnapshot ?? 'Unassigned';
+        const item = tasksByProjectMap.get(id) ?? { id, name, count: 0 };
+        item.count++;
+        tasksByProjectMap.set(id, item);
         if (t.actualMinutes !== null)
           timeByType.set(
             t.taskType,
@@ -252,62 +286,35 @@ export class DashboardService {
           );
       }
     const trendWeeks = weeks(week, q.trendWeeks);
-    const trend = await Promise.all(
-      trendWeeks.map(async (w) => {
-        const vs = await this.prisma.reportVersion.findMany({
-          where: {
-            submittedAt: { not: null },
-            report: {
-              weekStart: w,
-              ...(q.memberId ? { memberId: q.memberId } : {}),
-            },
-            tasks: {
-              some: q.projectId
-                ? { projectId: q.projectId, status: 'COMPLETED' }
-                : { status: 'COMPLETED' },
-            },
-          },
-          include: {
-            tasks: {
-              where: q.projectId
-                ? { projectId: q.projectId, status: 'COMPLETED' }
-                : { status: 'COMPLETED' },
-              select: { id: true },
-            },
-          },
-        });
-        return {
-          weekStart: dateOnly(w),
-          completedTasks: vs.reduce((s, v) => s + v.tasks.length, 0),
-        };
-      }),
-    );
-    const expected = reportRows.length;
+    const trendVersions = await this.prisma.reportVersion.findMany({
+      where: { submittedAt: { not: null }, report: { weekStart: { gte: trendWeeks[0], lte: week }, ...(q.memberId ? { memberId: q.memberId } : {}) } },
+      include: { report: { select: { id: true, weekStart: true } }, tasks: { where: { status: 'COMPLETED', section: 'THIS_WEEK', ...(q.projectId ? { projectId: q.projectId } : {}) }, select: { id: true } } },
+    });
+    const latestTrend = new Map<string, (typeof trendVersions)[number]>();
+    for (const version of trendVersions) { const old = latestTrend.get(version.report.id); if (!old || version.submittedAt! > old.submittedAt!) latestTrend.set(version.report.id, version); }
+    const trend = trendWeeks.map((w) => ({ weekStart: dateOnly(w), completedTasks: Array.from(latestTrend.values()).filter((v) => dateOnly(v.report.weekStart) === dateOnly(w)).reduce((sum, v) => sum + v.tasks.length, 0) }));
+    const expected = eligible.length;
     return {
       period: period(week),
       summary: {
-        submittedReports: submitted.length,
+        submittedReports: submittedReports.length,
         expectedReports: expected,
         eligibleSubmittedReports: submitted.length,
         submissionRatePct: expected
           ? Number(((submitted.length / expected) * 100).toFixed(2))
           : null,
-        onTimeRatePct: submitted.length
-          ? Number(((onTime / submitted.length) * 100).toFixed(2))
+        onTimeRatePct: expected
+          ? Number(((onTime / expected) * 100).toFixed(2))
           : null,
         onTime,
         late,
         pending,
         overdue,
-        needsCorrectionCount: reportRows.filter(
-          (r) => r.reportState === 'NEEDS_CORRECTION',
+        needsCorrectionCount: submittedReports.filter(
+          (r) => r.status === 'NEEDS_CORRECTION',
         ).length,
-        openBlockerCount: eligible.reduce(
-          (sum, user) =>
-            sum +
-            (user.reports[0]?.versions[0]?.blockers.filter(
-              (blocker) => blocker.status === 'OPEN',
-            ).length ?? 0),
+        openBlockerCount: versions.reduce(
+          (sum, version) => sum + version.blockers.filter((blocker) => blocker.status === 'OPEN').length,
           0,
         ),
       },
@@ -352,7 +359,7 @@ export class DashboardService {
         : {}
       : { memberId: actor.id };
     const versions = await this.prisma.reportVersion.findMany({
-      where: { submittedAt: { gte: from, lte: to }, report: reportWhere },
+      where: { submittedAt: { not: null }, report: reportWhere },
       include: {
         report: {
           include: {
@@ -377,7 +384,7 @@ export class DashboardService {
         };
         const submitted = {
           id: v.id,
-          eventType: 'REPORT_SUBMITTED',
+          eventType: v.versionNumber === 1 ? 'REPORT_SUBMITTED' : 'REPORT_RESUBMITTED',
           eventAt: v.submittedAt!,
           actor: person(v.report.member),
           ...base,
@@ -400,6 +407,7 @@ export class DashboardService {
           : null;
         return review ? [submitted, review] : [submitted];
       })
+      .filter((event) => event.eventAt >= from && event.eventAt <= to)
       .sort(
         (a, b) =>
           b.eventAt.getTime() - a.eventAt.getTime() ||

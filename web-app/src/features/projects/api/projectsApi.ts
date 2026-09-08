@@ -23,6 +23,7 @@ export const projectsApi = baseApi.injectEndpoints({
         pageSize?: number;
         archived?: "false" | "true" | "all";
         q?: string;
+        memberId?: string;
       }
     >({
       query: (params) => ({ url: "/projects", params }),

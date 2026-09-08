@@ -264,14 +264,6 @@ export class TasksService {
         'VALIDATION_FAILED',
         'Request validation failed.',
       );
-    if (
-      branch === 'own' &&
-      t.createdBy !== actor.id &&
-      keys.some(
-        (k) => !['status', 'actualCompletionPct', 'deliverable'].includes(k),
-      )
-    )
-      throw new ApiError(403, 'FORBIDDEN', 'Access is forbidden.');
     const planned =
       dto.plannedDate === undefined
         ? t.plannedDate
@@ -311,7 +303,8 @@ export class TasksService {
           'Assignee must be assigned to this project.',
         );
     }
-    const status = dto.status ?? t.status;
+    const status =
+      dto.actualCompletionPct === 100 ? 'COMPLETED' : (dto.status ?? t.status);
     const data = {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
       ...(dto.projectId !== undefined ? { projectId: dto.projectId } : {}),
@@ -332,7 +325,9 @@ export class TasksService {
       ...(dto.plannedMinutes !== undefined
         ? { plannedMinutes: dto.plannedMinutes }
         : {}),
-      ...(dto.status !== undefined ? { status: dto.status as never } : {}),
+      ...(dto.status !== undefined || dto.actualCompletionPct === 100
+        ? { status: status as never }
+        : {}),
       ...(dto.actualCompletionPct !== undefined
         ? { actualCompletionPct: dto.actualCompletionPct }
         : {}),
@@ -383,7 +378,7 @@ export class TasksService {
         data: { assigneeId: dto.assigneeId, lockVersion: { increment: 1 } },
         include: taskInclude,
       });
-      await tx.notification.create({
+      const notification = await tx.notification.create({
         data: {
           recipientId: dto.assigneeId,
           actorId: actor.id,
@@ -393,11 +388,12 @@ export class TasksService {
           title: 'Task assigned',
           message: `You were assigned: ${updated.name}`,
         },
+        select: { id: true },
       });
-      return updated;
+      return { task: updated, notificationId: notification.id };
     });
-    await this.notifications.publish(result.id);
-    return mapTask(result);
+    await this.notifications.publish(result.notificationId);
+    return mapTask(result.task);
   }
   async archive(actor: AuthenticatedUser, id: string, dto: ArchiveTaskDto) {
     const t = await this.task(id);

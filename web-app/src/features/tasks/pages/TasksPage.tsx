@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { FormFeedback } from "../../auth/components/FormFeedback";
 import { useAuth } from "../../auth/hooks/useAuth";
 import { useGetProjectsQuery } from "../../projects/api/projectsApi";
-import { useGetProjectMembersQuery } from "../../projects/api/projectsApi";
+import { useGetUsersQuery } from "../../user-management/api/usersApi";
 import { Pagination } from "../../../components/shared/Pagination/Pagination";
 import {
   useCreateTaskMutation,
@@ -17,6 +17,46 @@ import {
 import type { TaskDto, TaskInput, TimeEntryDto } from "../types/task.types";
 
 const today = () => new Date().toISOString().slice(0, 10);
+const formatDuration = (totalMinutes: number) => {
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+};
+function DurationFields({
+  label,
+  minutes,
+  onChange,
+  min = 0,
+  max,
+}: {
+  label: string;
+  minutes: number;
+  onChange: (minutes: number) => void;
+  min?: number;
+  max?: number;
+}) {
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  const update = (nextHours: number, nextMinutes: number) => {
+    const next = Math.max(min, nextHours * 60 + nextMinutes);
+    onChange(max === undefined ? next : Math.min(max, next));
+  };
+  return (
+    <fieldset className="form-label">
+      <legend>{label}</legend>
+      <div className="mt-1 grid grid-cols-2 gap-2">
+        <label className="text-xs text-slate-600">
+          Hours
+          <input type="number" min="0" className="form-input mt-1 px-3" value={hours} onChange={(e) => update(Number(e.target.value) || 0, remainder)} />
+        </label>
+        <label className="text-xs text-slate-600">
+          Minutes
+          <input type="number" min="0" max="59" className="form-input mt-1 px-3" value={remainder} onChange={(e) => update(hours, Math.min(59, Number(e.target.value) || 0))} />
+        </label>
+      </div>
+    </fieldset>
+  );
+}
 const empty: TaskInput = {
   name: "",
   projectId: "",
@@ -76,10 +116,17 @@ function TaskForm({ task, close }: { task?: TaskDto; close: () => void }) {
         }
       : empty,
   );
-  const { data: projects } = useGetProjectsQuery({ page: 1, pageSize: 100 });
-  const { data: members } = useGetProjectMembersQuery(form.projectId, {
-    skip: !admin || !form.projectId,
+  const { data: projects } = useGetProjectsQuery({
+    page: 1,
+    pageSize: 100,
+    ...(admin && form.assigneeId ? { memberId: form.assigneeId } : {}),
+  }, {
+    skip: admin && !form.assigneeId,
   });
+  const { data: users } = useGetUsersQuery(
+    { page: 1, pageSize: 100, accountStatus: "ACTIVE" },
+    { skip: !admin },
+  );
   const [create, createState] = useCreateTaskMutation();
   const [update, updateState] = useUpdateTaskMutation();
   const saving = createState.isLoading || updateState.isLoading;
@@ -120,10 +167,10 @@ function TaskForm({ task, close }: { task?: TaskDto; close: () => void }) {
             value={form.projectId}
             onChange={(e) => {
               set("projectId", e.target.value);
-              set("assigneeId", "");
             }}
+            disabled={admin && !form.assigneeId}
           >
-            <option value="">Select a project</option>
+            <option value="">{admin && !form.assigneeId ? "Select an assignee first" : "Select an assigned project"}</option>
             {projects?.data.data.map((project) => (
               <option key={project.id} value={project.id}>
                 {project.name}
@@ -132,15 +179,18 @@ function TaskForm({ task, close }: { task?: TaskDto; close: () => void }) {
           </select>
         </label>
         {admin && (
-          <label className="form-label">
+          <label className="form-label sm:order-first">
             Assign to
             <select
               className="form-input mt-1 px-3"
               value={form.assigneeId ?? ""}
-              onChange={(e) => set("assigneeId", e.target.value)}
+              onChange={(e) => {
+                set("assigneeId", e.target.value);
+                set("projectId", "");
+              }}
             >
-              <option value="">Myself</option>
-              {members?.data.map((member) => (
+              <option value="">Select a team member</option>
+              {users?.data.data.map((member) => (
                 <option key={member.id} value={member.id}>
                   {member.firstName} {member.lastName}
                 </option>
@@ -149,7 +199,7 @@ function TaskForm({ task, close }: { task?: TaskDto; close: () => void }) {
           </label>
         )}
         <label className="form-label">
-          Planned date
+          Start date
           <input
             required
             type="date"
@@ -159,11 +209,12 @@ function TaskForm({ task, close }: { task?: TaskDto; close: () => void }) {
           />
         </label>
         <label className="form-label">
-          Due date
+          End date
           <input
             type="date"
             className="form-input mt-1 px-3"
             value={form.dueDate ?? ""}
+            min={form.plannedDate}
             onChange={(e) => set("dueDate", e.target.value)}
           />
         </label>
@@ -197,16 +248,11 @@ function TaskForm({ task, close }: { task?: TaskDto; close: () => void }) {
             ))}
           </select>
         </label>
-        <label className="form-label">
-          Planned minutes
-          <input
-            min="0"
-            type="number"
-            className="form-input mt-1 px-3"
-            value={form.plannedMinutes}
-            onChange={(e) => set("plannedMinutes", Number(e.target.value))}
-          />
-        </label>
+        <DurationFields
+          label="Planned time"
+          minutes={form.plannedMinutes ?? 0}
+          onChange={(minutes) => set("plannedMinutes", minutes)}
+        />
       </div>
       <label className="form-label">
         Description
@@ -245,7 +291,7 @@ function ProgressDialog({ task, close }: { task: TaskDto; close: () => void }) {
           void update({
             id: task.id,
             lockVersion: task.lockVersion,
-            status,
+            status: progress === 100 ? "COMPLETED" : status,
             actualCompletionPct: progress,
             deliverable: nullable(deliverable),
           })
@@ -339,7 +385,7 @@ function TimeDialog({
         className="grid gap-3"
       >
         <p className="text-sm text-slate-600">
-          Past and future dates are supported.
+          Log actual time against the day it was worked.
         </p>
         <label className="form-label">
           Work date
@@ -351,18 +397,13 @@ function TimeDialog({
             onChange={(e) => setWorkDate(e.target.value)}
           />
         </label>
-        <label className="form-label">
-          Minutes
-          <input
-            type="number"
-            min="1"
-            max="1440"
-            required
-            className="form-input mt-1 px-3"
-            value={minutes}
-            onChange={(e) => setMinutes(Number(e.target.value))}
-          />
-        </label>
+        <DurationFields
+          label="Actual time"
+          minutes={minutes}
+          min={1}
+          max={1440}
+          onChange={setMinutes}
+        />
         <label className="form-label">
           Note
           <textarea
@@ -373,7 +414,9 @@ function TimeDialog({
         </label>
         {(createState.error || updateState.error) && (
           <FormFeedback>
-            Could not save time. A day cannot exceed 1,440 minutes.
+            Could not save time. Report-linked tasks can still have time logged;
+            check that the task is active and your total for this day is no more
+            than 1,440 minutes.
           </FormFeedback>
         )}
         <button
@@ -392,6 +435,7 @@ export function TasksPage() {
   const [scope, setScope] = useState<"own" | "team">("own");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [archive] = useArchiveTaskMutation();
   const [editing, setEditing] = useState<TaskDto | null>(null);
   const [progress, setProgress] = useState<TaskDto | null>(null);
@@ -409,6 +453,11 @@ export function TasksPage() {
     pageSize: 100,
     scope,
   });
+  const { data: expandedEntries, isFetching: isLoadingExpandedEntries } =
+    useGetTimeEntriesQuery(
+      { page: 1, pageSize: 100, scope, taskId: expandedTaskId ?? undefined },
+      { skip: !expandedTaskId },
+    );
   const [remove] = useDeleteTimeEntryMutation();
   const tasks = data?.data.data ?? [];
   return (
@@ -481,8 +530,13 @@ export function TasksPage() {
             </thead>
             <tbody>
               {tasks.map((task) => (
-                <tr key={task.id} className="border-t border-slate-100">
-                  <td className="p-3">
+                <Fragment key={task.id}>
+                  <tr className="border-t border-slate-100">
+                  <td
+                    className="cursor-pointer p-3"
+                    onClick={() => setExpandedTaskId((id) => id === task.id ? null : task.id)}
+                    title="Show logged time entries"
+                  >
                     <strong>{task.name}</strong>
                     <span className="block text-xs text-slate-500">
                       {task.status} · {task.loggedMinutes}m logged
@@ -492,7 +546,12 @@ export function TasksPage() {
                   <td className="p-3">
                     {task.assignee.firstName} {task.assignee.lastName}
                   </td>
-                  <td className="p-3">{task.plannedDate}</td>
+                  <td className="p-3">
+                    {task.plannedDate}{task.dueDate ? ` – ${task.dueDate}` : ""}
+                    <span className="block text-xs text-slate-500">
+                      Planned: {formatDuration(task.plannedMinutes)}
+                    </span>
+                  </td>
                   <td className="p-3">{task.actualCompletionPct}%</td>
                   <td className="whitespace-nowrap p-3 text-right">
                     <button
@@ -530,7 +589,29 @@ export function TasksPage() {
                       </>
                     )}
                   </td>
-                </tr>
+                  </tr>
+                  {expandedTaskId === task.id && (
+                    <tr className="bg-slate-50">
+                      <td colSpan={6} className="p-4">
+                        <h3 className="font-medium">Logged time entries</h3>
+                        {isLoadingExpandedEntries ? (
+                          <p className="mt-2 text-sm text-slate-500">Loading time entries…</p>
+                        ) : (expandedEntries?.data.data ?? []).length ? (
+                          <ul className="mt-2 space-y-1 text-sm text-slate-600">
+                            {expandedEntries?.data.data.map((entry) => (
+                              <li key={entry.id}>
+                                {entry.workDate} · {formatDuration(entry.minutes)} · {entry.user.firstName} {entry.user.lastName}
+                                {entry.note ? ` — ${entry.note}` : ""}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="mt-2 text-sm text-slate-500">No time entries have been logged for this task.</p>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -562,7 +643,7 @@ export function TasksPage() {
                 >
                   <span>
                     <strong>{entry.workDate}</strong> · {entry.task.name} ·{" "}
-                    {entry.minutes}m
+                    {formatDuration(entry.minutes)}
                   </span>
                   <span>
                     <button

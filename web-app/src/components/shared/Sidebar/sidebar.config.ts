@@ -4,7 +4,7 @@ import { ROUTES } from '../../../constants/routes'
 
 export interface SidebarItemConfig { id: string; label: string; path: string; requiredRoles?: RoleCode[]; anyPermissions?: string[]; allPermissions?: string[]; end?: boolean }
 export const sidebarConfig: SidebarItemConfig[] = [
-  { id: 'dashboard', label: 'Dashboard', path: ROUTES.home, anyPermissions: [PERMISSIONS.dashboardReadOwn, PERMISSIONS.dashboardReadTeam], end: true },
+  { id: 'dashboard', label: 'Dashboard', path: ROUTES.dashboard, anyPermissions: [PERMISSIONS.dashboardReadOwn, PERMISSIONS.dashboardReadTeam], end: true },
   { id: 'reports', label: 'Reports', path: ROUTES.reports, anyPermissions: [PERMISSIONS.reportReadOwn, PERMISSIONS.reportReadTeam] },
   { id: 'tasks', label: 'Tasks', path: ROUTES.tasks, anyPermissions: [PERMISSIONS.taskReadOwn, PERMISSIONS.taskManageTeam] },
   { id: 'projects', label: 'Projects', path: ROUTES.projects, allPermissions: [PERMISSIONS.projectRead] },

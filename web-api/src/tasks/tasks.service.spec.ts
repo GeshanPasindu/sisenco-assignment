@@ -13,6 +13,7 @@ const actor: AuthenticatedUser = {
 function fixture() {
   const prisma = {
     task: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
+    reportTask: { findFirst: jest.fn() },
     taskTimeEntry: {
       aggregate: jest.fn(),
       create: jest.fn(),

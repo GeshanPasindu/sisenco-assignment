@@ -15,6 +15,8 @@ export const baseApi = createApi({
     "TimeEntries",
     "Reports",
     "ReportCompliance",
+    "Dashboard",
+    "DashboardActivity",
   ],
   endpoints: () => ({}),
 });

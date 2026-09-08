@@ -60,6 +60,16 @@ const weekEnd = (week: Date) => {
   d.setUTCDate(d.getUTCDate() + 6);
   return d;
 };
+const candidateWeek = (week: Date, section: 'THIS_WEEK' | 'NEXT_WEEK') => {
+  const start = new Date(week);
+  if (section === 'NEXT_WEEK') start.setUTCDate(start.getUTCDate() + 7);
+  return { start, end: weekEnd(start) };
+};
+const overlapsCandidateWeek = (
+  task: { plannedDate: Date; dueDate: Date | null },
+  start: Date,
+  end: Date,
+) => task.plannedDate <= end && (!task.dueDate || task.dueDate >= start);
 const deadline = (week: Date) => {
   const d = new Date(week);
   d.setUTCDate(d.getUTCDate() + 7);
@@ -91,6 +101,10 @@ const mapVersion = (v: VersionFull) => ({
   tasks: v.tasks.map((t) => ({
     id: t.id,
     sourceTaskId: t.sourceTaskId,
+    sourceTaskDescription: t.sourceTaskDescription,
+    sourceTaskPlannedDate: t.sourceTaskPlannedDate ? dateOnly(t.sourceTaskPlannedDate) : null,
+    sourceTaskDueDate: t.sourceTaskDueDate ? dateOnly(t.sourceTaskDueDate) : null,
+    sourceTaskAssigneeName: t.sourceTaskAssigneeName,
     projectId: t.projectId,
     section: t.section,
     name: t.name,
@@ -145,8 +159,11 @@ export class ReportsService {
     if (
       actor.role.code === 'MANAGER_ADMIN' &&
       actor.permissions.includes('report:read_team')
-    )
+    ) {
+      if (r.member.id !== actor.id && !r.versions.some((version) => version.submittedAt))
+        throw new ApiError(404, 'NOT_FOUND', 'Resource not found.');
       return 'team';
+    }
     throw new ApiError(404, 'NOT_FOUND', 'Resource not found.');
   }
   private ownUpdate(actor: AuthenticatedUser, r: ReportFull) {
@@ -212,19 +229,24 @@ export class ReportsService {
         'VALIDATION_FAILED',
         'Request validation failed.',
       );
+    const filters: Prisma.ReportWhereInput[] = [
+      ...(q.scope === 'team'
+        ? [{ status: { in: ['SUBMITTED', 'NEEDS_CORRECTION', 'APPROVED'] as never[] } }]
+        : []),
+      ...(q.status ? [{ status: q.status as never }] : []),
+    ];
+    if (q.fromWeek || q.toWeek)
+      filters.push({
+        weekStart: {
+          ...(q.fromWeek
+            ? { gte: validMonday(q.fromWeek, 'fromWeek') }
+            : {}),
+          ...(q.toWeek ? { lte: validMonday(q.toWeek, 'toWeek') } : {}),
+        },
+      });
     const where: Prisma.ReportWhereInput = {
       memberId: q.scope === 'own' ? actor.id : q.memberId,
-      ...(q.status ? { status: q.status as never } : {}),
-      ...(q.fromWeek || q.toWeek
-        ? {
-            weekStart: {
-              ...(q.fromWeek
-                ? { gte: validMonday(q.fromWeek, 'fromWeek') }
-                : {}),
-              ...(q.toWeek ? { lte: validMonday(q.toWeek, 'toWeek') } : {}),
-            },
-          }
-        : {}),
+      ...(filters.length ? { AND: filters } : {}),
     };
     const [total, rows] = await this.prisma.$transaction([
       this.prisma.report.count({ where }),
@@ -401,7 +423,7 @@ export class ReportsService {
     return { r, v };
   }
   async save(actor: AuthenticatedUser, id: string, dto: SaveVersionDto) {
-    const { v } = await this.editable(
+    const { r, v } = await this.editable(
       actor,
       id,
       dto.versionId,
@@ -423,11 +445,22 @@ export class ReportsService {
         },
       });
       const pmap = new Map(projects.map((p) => [p.id, p]));
+      const sourceTasks = await tx.task.findMany({
+        where: { id: { in: dto.tasks.map((task) => task.sourceTaskId).filter((id): id is string => !!id) } },
+        include: { assignee: { select: { firstName: true, lastName: true } } },
+      });
+      const sourceMap = new Map(sourceTasks.map((task) => [task.id, task]));
       for (const t of dto.tasks)
+        {
+        const source = t.sourceTaskId ? sourceMap.get(t.sourceTaskId) : undefined;
         await tx.reportTask.create({
           data: {
             reportVersionId: v.id,
             sourceTaskId: t.sourceTaskId ?? null,
+            sourceTaskDescription: source?.description ?? null,
+            sourceTaskPlannedDate: source?.plannedDate ?? null,
+            sourceTaskDueDate: source?.dueDate ?? null,
+            sourceTaskAssigneeName: source ? `${source.assignee.firstName} ${source.assignee.lastName}` : null,
             projectId: t.projectId ?? null,
             projectNameSnapshot: t.projectId
               ? (pmap.get(t.projectId)?.name ?? null)
@@ -445,6 +478,7 @@ export class ReportsService {
             displayOrder: t.displayOrder,
           },
         });
+        }
       for (const b of dto.blockers)
         await tx.reportBlocker.create({
           data: {
@@ -483,19 +517,15 @@ export class ReportsService {
         .filter((t) => t.section === q.section && t.sourceTaskId)
         .map((t) => t.sourceTaskId),
     );
+    const { start, end } = candidateWeek(
+      r.weekStart,
+      q.section as 'THIS_WEEK' | 'NEXT_WEEK',
+    );
     const where: Prisma.TaskWhereInput = {
       assigneeId: actor.id,
       archivedAt: null,
-      plannedDate: {
-        gte:
-          q.section === 'THIS_WEEK'
-            ? r.weekStart
-            : new Date(r.weekStart.getTime() + 7 * 86400000),
-        lte:
-          q.section === 'THIS_WEEK'
-            ? weekEnd(r.weekStart)
-            : new Date(r.weekStart.getTime() + 13 * 86400000),
-      },
+      plannedDate: { lte: end },
+      OR: [{ dueDate: null }, { dueDate: { gte: start } }],
       ...(q.projectId ? { projectId: q.projectId } : {}),
       ...(q.q ? { name: { contains: q.q, mode: 'insensitive' } } : {}),
     };
@@ -503,14 +533,25 @@ export class ReportsService {
       this.prisma.task.count({ where }),
       this.prisma.task.findMany({
         where,
-        include: { project: { select: { id: true, name: true } } },
+        include: {
+          project: { select: { id: true, name: true } },
+          timeEntries: {
+            where: { userId: actor.id, workDate: { gte: start, lte: end } },
+            select: { minutes: true },
+          },
+        },
         orderBy: [{ plannedDate: 'desc' }, { id: 'desc' }],
         skip: (q.page - 1) * q.pageSize,
         take: q.pageSize,
       }),
     ]);
     return {
-      data: tasks.map((t) => ({
+      data: tasks.map((t) => {
+        const actualMinutes = t.timeEntries.reduce(
+          (total, entry) => total + entry.minutes,
+          0,
+        );
+        return {
         sourceTaskId: t.id,
         name: t.name,
         project: t.project,
@@ -527,12 +568,13 @@ export class ReportsService {
           actualCompletionPct:
             q.section === 'NEXT_WEEK' ? null : Number(t.actualCompletionPct),
           plannedMinutes: t.plannedMinutes,
-          actualMinutes: q.section === 'NEXT_WEEK' ? null : 0,
+          actualMinutes: q.section === 'NEXT_WEEK' ? null : actualMinutes,
           taskType: t.taskType,
           deliverable: t.deliverable,
           displayOrder: 0,
         },
-      })),
+        };
+      }),
       pagination: {
         page: q.page,
         pageSize: q.pageSize,
@@ -549,13 +591,32 @@ export class ReportsService {
       dto.versionId,
       dto.lockVersion,
     );
+    const r = await this.report(id);
+    const { start, end } = candidateWeek(
+      r.weekStart,
+      dto.section as 'THIS_WEEK' | 'NEXT_WEEK',
+    );
     const tasks = await this.prisma.task.findMany({
       where: { id: { in: dto.taskIds } },
-      include: { project: true },
+      include: {
+        project: true,
+        assignee: { select: { firstName: true, lastName: true } },
+        timeEntries: {
+          where: { userId: actor.id, workDate: { gte: start, lte: end } },
+          select: { minutes: true },
+        },
+      },
     });
     if (tasks.length !== dto.taskIds.length)
       throw new ApiError(404, 'NOT_FOUND', 'Resource not found.');
-    if (tasks.some((t) => t.assigneeId !== actor.id || t.archivedAt))
+    if (
+      tasks.some(
+        (t) =>
+          t.assigneeId !== actor.id ||
+          t.archivedAt ||
+          !overlapsCandidateWeek(t, start, end),
+      )
+    )
       throw new ApiError(404, 'NOT_FOUND', 'Resource not found.');
     const existing = await this.prisma.reportTask.findFirst({
       where: {
@@ -576,6 +637,10 @@ export class ReportsService {
           data: {
             reportVersionId: v.id,
             sourceTaskId: t.id,
+            sourceTaskDescription: t.description,
+            sourceTaskPlannedDate: t.plannedDate,
+            sourceTaskDueDate: t.dueDate,
+            sourceTaskAssigneeName: `${t.assignee.firstName} ${t.assignee.lastName}`,
             projectId: t.projectId,
             projectNameSnapshot: t.project.name,
             section: dto.section as never,
@@ -586,7 +651,10 @@ export class ReportsService {
             actualCompletionPct:
               dto.section === 'NEXT_WEEK' ? null : t.actualCompletionPct,
             plannedMinutes: t.plannedMinutes,
-            actualMinutes: dto.section === 'NEXT_WEEK' ? null : 0,
+            actualMinutes:
+              dto.section === 'NEXT_WEEK'
+                ? null
+                : t.timeEntries.reduce((total, entry) => total + entry.minutes, 0),
             taskType: t.taskType,
             deliverable: t.deliverable,
             displayOrder: i,
@@ -627,6 +695,10 @@ export class ReportsService {
         tasks: {
           create: source.tasks.map((t) => ({
             sourceTaskId: t.sourceTaskId,
+            sourceTaskDescription: t.sourceTaskDescription,
+            sourceTaskPlannedDate: t.sourceTaskPlannedDate,
+            sourceTaskDueDate: t.sourceTaskDueDate,
+            sourceTaskAssigneeName: t.sourceTaskAssigneeName,
             projectId: t.projectId,
             projectNameSnapshot: t.projectNameSnapshot,
             section: t.section,
@@ -663,7 +735,7 @@ export class ReportsService {
     return mapVersion(clone);
   }
   async submit(actor: AuthenticatedUser, id: string, dto: SubmitReportDto) {
-    const { v } = await this.editable(
+    const { r, v } = await this.editable(
       actor,
       id,
       dto.versionId,
@@ -683,18 +755,58 @@ export class ReportsService {
         'Report content is required.',
       );
     const now = new Date();
-    const updated = await this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.reportVersion.update({
         where: { id: v.id },
         data: { submittedAt: now, lockVersion: { increment: 1 } },
       });
       await tx.report.update({ where: { id }, data: { status: 'SUBMITTED' } });
-      return tx.report.findUniqueOrThrow({
+      const managers = await tx.user.findMany({
+        where: {
+          activatedAt: { not: null },
+          deactivatedAt: null,
+          role: {
+            code: 'MANAGER_ADMIN',
+            deletedAt: null,
+            rolePermissions: {
+              some: { permission: { code: 'report:read_team' } },
+            },
+          },
+        },
+        select: { id: true },
+      });
+      const notifications = await Promise.all(
+        managers.map((manager) =>
+          tx.notification.create({
+            data: {
+              recipientId: manager.id,
+              actorId: actor.id,
+              eventKey: v.id,
+              type: r.versions.some((version) => version.submittedAt)
+                ? 'REPORT_RESUBMITTED'
+                : 'REPORT_SUBMITTED',
+              reportVersionId: v.id,
+              title: r.versions.some((version) => version.submittedAt)
+                ? 'Report resubmitted'
+                : 'Report submitted',
+              message: `${r.member.firstName} ${r.member.lastName} submitted the report for ${dateOnly(r.weekStart)}.`,
+            },
+            select: { id: true },
+          }),
+        ),
+      );
+      const report = await tx.report.findUniqueOrThrow({
         where: { id },
         include: reportInclude,
       });
+      return { report, notificationIds: notifications.map((notification) => notification.id) };
     });
-    return this.detail(updated, actor);
+    await Promise.all(
+      result.notificationIds.map((notificationId) =>
+        this.notifications.publish(notificationId),
+      ),
+    );
+    return this.detail(result.report, actor);
   }
   async review(actor: AuthenticatedUser, id: string, dto: ReviewDto) {
     const r = await this.report(id);
@@ -756,7 +868,7 @@ export class ReportsService {
           status: dto.decision === 'APPROVED' ? 'APPROVED' : 'NEEDS_CORRECTION',
         },
       });
-      await tx.notification.create({
+      const notification = await tx.notification.create({
         data: {
           recipientId: r.member.id,
           actorId: actor.id,
@@ -773,6 +885,7 @@ export class ReportsService {
               : 'Changes requested',
           message: dto.comment ?? 'Your report was reviewed.',
         },
+        select: { id: true },
       });
       return {
         report: await tx.report.findUniqueOrThrow({
@@ -780,9 +893,10 @@ export class ReportsService {
           include: reportInclude,
         }),
         review,
+        notificationId: notification.id,
       };
     });
-    await this.notifications.publish(result.review.id);
+    await this.notifications.publish(result.notificationId);
     return {
       report: this.detail(result.report, actor),
       review: mapReview(result.review),
