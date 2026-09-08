@@ -3,7 +3,7 @@
 
 BEGIN;
 
-INSERT INTO task_manager.roles (id, code, name, description)
+INSERT INTO public.roles (id, code, name, description)
 VALUES
   (
     md5('seed:role:TEAM_MEMBER')::uuid,
@@ -23,7 +23,7 @@ SET name = EXCLUDED.name,
     deleted_at = NULL,
     updated_at = CURRENT_TIMESTAMP;
 
-INSERT INTO task_manager.permissions (id, code, description)
+INSERT INTO public.permissions (id, code, description)
 SELECT md5('seed:permission:' || p.code)::uuid, p.code, p.description
 FROM (
   VALUES
@@ -70,19 +70,19 @@ WITH member_permissions(code) AS (
     ('notification:read_own'),
     ('notification:update_own')
 )
-INSERT INTO task_manager.role_permissions (role_id, permission_id)
+INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
-FROM task_manager.roles r
+FROM public.roles r
 JOIN member_permissions m ON TRUE
-JOIN task_manager.permissions p ON p.code = m.code
+JOIN public.permissions p ON p.code = m.code
 WHERE r.code = 'TEAM_MEMBER'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Manager/admin receives all currently seeded permissions.
-INSERT INTO task_manager.role_permissions (role_id, permission_id)
+INSERT INTO public.role_permissions (role_id, permission_id)
 SELECT r.id, p.id
-FROM task_manager.roles r
-CROSS JOIN task_manager.permissions p
+FROM public.roles r
+CROSS JOIN public.permissions p
 WHERE r.code = 'MANAGER_ADMIN'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
