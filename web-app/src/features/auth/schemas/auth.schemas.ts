@@ -11,7 +11,7 @@ const emailSchema = z
 // Passwords are intentionally never trimmed, normalized or otherwise transformed.
 export const newPasswordSchema = z
   .string()
-  .min(15, 'Use at least 15 characters.')
+  .min(8, 'Use at least 8 characters.')
   .max(128, 'Use no more than 128 characters.')
 
 export const loginSchema = z.object({

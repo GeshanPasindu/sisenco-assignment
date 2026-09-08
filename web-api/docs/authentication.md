@@ -36,7 +36,7 @@ have `Cache-Control: no-store`.
 Unknown DTO fields and auth query parameters are rejected. Refresh and logout
 reject any request body, including `{}`. JSON bodies have a 32 KiB transport cap.
 Company email is trimmed/lowercased. Passwords are never normalized or trimmed.
-The default new-password policy is 15–128 Unicode code points with spaces allowed
+The default new-password policy is 8–128 Unicode code points with spaces allowed
 and no character-composition rules; it applies to acceptance/change only. Login
 and current-password verification allow existing password lengths.
 
@@ -91,7 +91,7 @@ Use `npm.cmd` in PowerShell when execution policy blocks the npm `.ps1` wrapper.
 | `COOKIE_SAME_SITE`        | `lax` by default; `none` only with Secure                      |
 | `ACCESS_TOKEN_SECONDS`    | 900; integer 1–3600                                            |
 | `REFRESH_SESSION_SECONDS` | 604800; integer 60–2592000; absolute lifetime                  |
-| `PASSWORD_MIN_LENGTH`     | 15; configurable from 15 to 128                                |
+| `PASSWORD_MIN_LENGTH`     | 8; configurable from 8 to 128                                  |
 | `PASSWORD_MAX_LENGTH`     | 128; at least the minimum, no more than 1024                   |
 | `AUTH_TEST_DATABASE_URL`  | Optional local test DB override; migrations must already exist |
 

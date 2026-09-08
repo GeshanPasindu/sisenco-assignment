@@ -6,6 +6,7 @@ import { useGetUsersQuery } from "../../user-management/api/usersApi";
 import { Pagination } from "../../../components/shared/Pagination/Pagination";
 import {
   useCreateTaskMutation,
+  useAssignTaskMutation,
   useCreateTimeEntryMutation,
   useArchiveTaskMutation,
   useDeleteTimeEntryMutation,
@@ -129,21 +130,32 @@ function TaskForm({ task, close }: { task?: TaskDto; close: () => void }) {
   );
   const [create, createState] = useCreateTaskMutation();
   const [update, updateState] = useUpdateTaskMutation();
-  const saving = createState.isLoading || updateState.isLoading;
+  const [assign, assignState] = useAssignTaskMutation();
+  const saving = createState.isLoading || updateState.isLoading || assignState.isLoading;
   const set = (key: keyof TaskInput, value: string | number) =>
     setForm((current) => ({ ...current, [key]: value }));
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
+    const { assigneeId, ...taskFields } = form;
     const body = {
-      ...form,
+      ...taskFields,
       description: nullable(form.description),
       dueDate: nullable(form.dueDate),
     };
-    const request = task
-      ? update({ ...body, id: task.id, lockVersion: task.lockVersion })
-      : create(body);
-    void request
+    if (!task) {
+      void create({ ...body, assigneeId })
+        .unwrap()
+        .then(close)
+        .catch(() => undefined);
+      return;
+    }
+    void update({ ...body, id: task.id, lockVersion: task.lockVersion })
       .unwrap()
+      .then((result) =>
+        admin && assigneeId && assigneeId !== task.assignee.id
+          ? assign({ id: task.id, assigneeId, lockVersion: result.data.lockVersion }).unwrap()
+          : undefined,
+      )
       .then(close)
       .catch(() => undefined);
   };
@@ -262,7 +274,7 @@ function TaskForm({ task, close }: { task?: TaskDto; close: () => void }) {
           onChange={(e) => set("description", e.target.value)}
         />
       </label>
-      {(createState.error || updateState.error) && (
+      {(createState.error || updateState.error || assignState.error) && (
         <FormFeedback>
           Could not save the task. Check its project assignment and details.
         </FormFeedback>
@@ -430,9 +442,9 @@ function TimeDialog({
   );
 }
 export function TasksPage() {
-  const { hasPermission } = useAuth();
+  const { user, hasPermission } = useAuth();
   const team = hasPermission("task:manage_team");
-  const [scope, setScope] = useState<"own" | "team">("own");
+  const [scope, setScope] = useState<"own" | "team">(team ? "team" : "own");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
@@ -560,12 +572,14 @@ export function TasksPage() {
                     >
                       Progress
                     </button>
-                    <button
-                      className="mr-3 text-blue-700"
-                      onClick={() => setTiming({ task })}
-                    >
-                      Log time
-                    </button>
+                    {task.assignee.id === user?.id && (
+                      <button
+                        className="mr-3 text-blue-700"
+                        onClick={() => setTiming({ task })}
+                      >
+                        Log time
+                      </button>
+                    )}
                     {(team || task.createdBy.id === task.assignee.id) && (
                       <>
                         <button

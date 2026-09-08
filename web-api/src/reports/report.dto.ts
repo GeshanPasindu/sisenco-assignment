@@ -48,6 +48,8 @@ export class ReportQueryDto {
   @IsOptional() @IsDateString() fromWeek?: string;
   @IsOptional() @IsDateString() toWeek?: string;
   @IsOptional() @IsUUID() projectId?: string;
+  @IsOptional() @IsString() @MaxLength(255) memberQuery?: string;
+  @IsOptional() @IsString() @MaxLength(255) projectQuery?: string;
   @IsOptional() @IsIn(reportStatuses) status?: string;
   @IsOptional() @IsUUID() memberId?: string;
 }

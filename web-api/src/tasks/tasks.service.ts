@@ -292,16 +292,6 @@ export class TasksService {
         !(await this.hasProjectAccess(actor.id, dto.projectId))
       )
         throw new ApiError(404, 'NOT_FOUND', 'Resource not found.');
-      if (
-        branch === 'team' &&
-        t.assigneeId !== actor.id &&
-        !(await this.isDirectProjectMember(t.assigneeId, dto.projectId))
-      )
-        throw new ApiError(
-          409,
-          'ASSIGNEE_NOT_PROJECT_MEMBER',
-          'Assignee must be assigned to this project.',
-        );
     }
     const status =
       dto.actualCompletionPct === 100 ? 'COMPLETED' : (dto.status ?? t.status);

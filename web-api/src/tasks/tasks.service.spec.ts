@@ -13,6 +13,7 @@ const actor: AuthenticatedUser = {
 function fixture() {
   const prisma = {
     task: { findUnique: jest.fn(), create: jest.fn(), update: jest.fn() },
+    project: { findUnique: jest.fn() },
     reportTask: { findFirst: jest.fn() },
     taskTimeEntry: {
       aggregate: jest.fn(),
@@ -82,5 +83,55 @@ describe('TasksService', () => {
     ).rejects.toMatchObject({
       response: expect.objectContaining({ code: 'DAILY_TIME_LIMIT' }),
     });
+  });
+
+  it('allows a manager to edit an active or completed assigned task without project membership', async () => {
+    const { prisma, service } = fixture();
+    const manager: AuthenticatedUser = {
+      ...actor,
+      role: { id: 'role-manager', code: 'MANAGER_ADMIN', name: 'Manager/Admin' },
+      permissions: ['task:manage_team'],
+    };
+    const task = {
+      id: 'task-1',
+      assigneeId: 'member-1',
+      archivedAt: null,
+      lockVersion: 4,
+      plannedDate: new Date('2026-09-07T00:00:00.000Z'),
+      dueDate: new Date('2026-09-11T00:00:00.000Z'),
+      status: 'COMPLETED',
+      completedAt: new Date('2026-09-08T00:00:00.000Z'),
+    };
+    const updated = {
+      ...task,
+      name: 'Updated completed task',
+      description: null,
+      project: { id: 'project-2', name: 'Another project' },
+      creator: { id: manager.id, firstName: 'Admin', lastName: 'Manager' },
+      assignee: { id: 'member-1', firstName: 'Team', lastName: 'Member' },
+      priority: 'MEDIUM',
+      taskType: 'OTHER',
+      plannedCompletionPct: 100,
+      actualCompletionPct: 100,
+      plannedMinutes: 60,
+      deliverable: 'Delivered',
+      timeEntries: [],
+      createdAt: new Date('2026-09-07T00:00:00.000Z'),
+      updatedAt: new Date('2026-09-08T00:00:00.000Z'),
+    };
+    jest.spyOn(prisma.task, 'findUnique').mockResolvedValue(task as never);
+    jest.spyOn(prisma.project, 'findUnique').mockResolvedValue({ id: 'project-2', archivedAt: null } as never);
+    jest.spyOn(prisma.task, 'update').mockResolvedValue(updated as never);
+
+    await expect(
+      service.update(manager, task.id, {
+        lockVersion: task.lockVersion,
+        name: updated.name,
+        projectId: updated.project.id,
+      }),
+    ).resolves.toMatchObject({ id: task.id, name: updated.name });
+    expect(prisma.task.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: task.id } }),
+    );
   });
 });

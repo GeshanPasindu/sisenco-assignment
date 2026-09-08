@@ -34,7 +34,7 @@ export class ChangePasswordDto {
 
   @ApiProperty({
     writeOnly: true,
-    minLength: 15,
+    minLength: 8,
     maxLength: 128,
     description:
       'Configured new-password policy; spaces and Unicode allowed, never trimmed.',
@@ -51,7 +51,7 @@ export class InvitationTokenDto {
 }
 
 export class AcceptInvitationDto extends InvitationTokenDto {
-  @ApiProperty({ writeOnly: true, minLength: 15, maxLength: 128 })
+  @ApiProperty({ writeOnly: true, minLength: 8, maxLength: 128 })
   @IsString()
   password!: string;
 
