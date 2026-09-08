@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { FormFeedback } from "../../auth/components/FormFeedback";
 import { useAuth } from "../../auth/hooks/useAuth";
 import { Pagination } from "../../../components/shared/Pagination/Pagination";
@@ -34,8 +34,8 @@ import {
 
 const monday = (offset = 0) => {
   const date = new Date();
-  const day = date.getDay() || 7;
-  date.setDate(date.getDate() - day + 1 + offset * 7);
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1) + offset * 7);
   return date.toISOString().slice(0, 10);
 };
 const formatDuration = (minutes: number | null) => {
@@ -97,13 +97,23 @@ function ReadOnlyReportTask({
               : ` · Planned progress: ${task.plannedCompletionPct ?? 0}%`}
           </p>
           {task.sourceTaskDescription && (
-            <p className="mt-1 text-slate-600">Description: {task.sourceTaskDescription}</p>
-          )}
-          {(task.sourceTaskPlannedDate || task.sourceTaskDueDate || task.sourceTaskAssigneeName) && (
             <p className="mt-1 text-slate-600">
-              {task.sourceTaskPlannedDate ? `Start: ${task.sourceTaskPlannedDate}` : ""}
-              {task.sourceTaskDueDate ? ` · Due: ${task.sourceTaskDueDate}` : ""}
-              {task.sourceTaskAssigneeName ? ` · Assignee: ${task.sourceTaskAssigneeName}` : ""}
+              Description: {task.sourceTaskDescription}
+            </p>
+          )}
+          {(task.sourceTaskPlannedDate ||
+            task.sourceTaskDueDate ||
+            task.sourceTaskAssigneeName) && (
+            <p className="mt-1 text-slate-600">
+              {task.sourceTaskPlannedDate
+                ? `Start: ${task.sourceTaskPlannedDate}`
+                : ""}
+              {task.sourceTaskDueDate
+                ? ` · Due: ${task.sourceTaskDueDate}`
+                : ""}
+              {task.sourceTaskAssigneeName
+                ? ` · Assignee: ${task.sourceTaskAssigneeName}`
+                : ""}
             </p>
           )}
           {task.deliverable && (
@@ -286,31 +296,425 @@ export function VersionCompare({
   );
 }
 function VersionSnapshot({ version }: { version?: ReportVersion }) {
-  if (!version) return <p className="text-sm text-slate-500">Choose a version.</p>;
+  if (!version)
+    return <p className="text-sm text-slate-500">Choose a version.</p>;
   return (
     <article className="space-y-5 text-sm">
       <header>
-        <h3 className="text-lg font-semibold">Version {version.versionNumber}</h3>
-        <p className="mt-1 text-slate-600">{version.submittedAt ? `Submitted ${new Date(version.submittedAt).toLocaleString()}` : "Current draft"}</p>
-        {version.review?.comment && <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-950">Reviewer feedback: {version.review.comment}</p>}
+        <h3 className="text-lg font-semibold">
+          Version {version.versionNumber}
+        </h3>
+        <p className="mt-1 text-slate-600">
+          {version.submittedAt
+            ? `Submitted ${new Date(version.submittedAt).toLocaleString()}`
+            : "Current draft"}
+        </p>
+        {version.review?.comment && (
+          <p className="mt-2 rounded border border-amber-200 bg-amber-50 p-2 text-amber-950">
+            Reviewer feedback: {version.review.comment}
+          </p>
+        )}
       </header>
       {(["THIS_WEEK", "NEXT_WEEK"] as TaskSection[]).map((section) => {
         const tasks = version.tasks.filter((task) => task.section === section);
-        return <section key={section}><h4 className="font-semibold">{section === "THIS_WEEK" ? "This week's work" : "Next week's plan"}</h4>{tasks.length ? <div className="mt-2 space-y-2">{tasks.map((task) => <div className="rounded border border-slate-200 p-3" key={task.id ?? `${task.name}-${task.displayOrder}`}><strong>{task.name}</strong><p className="mt-1 text-slate-600">{task.projectNameSnapshot ?? "No project"} · Priority: {task.priority} · Type: {task.taskType}{task.status ? ` · Status: ${task.status}` : ""}</p><p className="mt-1 text-slate-600">Planned: {formatDuration(task.plannedMinutes)} · Actual: {formatDuration(task.actualMinutes)} · {section === "THIS_WEEK" ? `Progress: ${task.actualCompletionPct ?? 0}%` : `Planned progress: ${task.plannedCompletionPct ?? 0}%`}</p>{task.deliverable && <p className="mt-1 text-slate-600">Deliverable: {task.deliverable}</p>}</div>)}</div> : <p className="mt-1 text-slate-500">No tasks recorded.</p>}</section>;
+        return (
+          <section key={section}>
+            <h4 className="font-semibold">
+              {section === "THIS_WEEK"
+                ? "This week's work"
+                : "Next week's plan"}
+            </h4>
+            {tasks.length ? (
+              <div className="mt-2 space-y-2">
+                {tasks.map((task) => (
+                  <div
+                    className="rounded border border-slate-200 p-3"
+                    key={task.id ?? `${task.name}-${task.displayOrder}`}
+                  >
+                    <strong>{task.name}</strong>
+                    <p className="mt-1 text-slate-600">
+                      {task.projectNameSnapshot ?? "No project"} · Priority:{" "}
+                      {task.priority} · Type: {task.taskType}
+                      {task.status ? ` · Status: ${task.status}` : ""}
+                    </p>
+                    <p className="mt-1 text-slate-600">
+                      Planned: {formatDuration(task.plannedMinutes)} · Actual:{" "}
+                      {formatDuration(task.actualMinutes)} ·{" "}
+                      {section === "THIS_WEEK"
+                        ? `Progress: ${task.actualCompletionPct ?? 0}%`
+                        : `Planned progress: ${task.plannedCompletionPct ?? 0}%`}
+                    </p>
+                    {task.deliverable && (
+                      <p className="mt-1 text-slate-600">
+                        Deliverable: {task.deliverable}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-1 text-slate-500">No tasks recorded.</p>
+            )}
+          </section>
+        );
       })}
-      <section><h4 className="font-semibold">Blockers</h4>{version.blockers.length ? <ul className="mt-2 space-y-1">{version.blockers.map((item) => <li key={item.id ?? item.description}>{item.isKey ? <KeyItem>{item.description}</KeyItem> : item.description}</li>)}</ul> : <p className="mt-1 text-slate-500">No blockers recorded.</p>}</section>
-      <section><h4 className="font-semibold">Achievements</h4>{version.achievements.length ? <ul className="mt-2 space-y-1">{version.achievements.map((item) => <li key={item.id ?? item.description}>{item.isKey ? <KeyItem>{item.description}</KeyItem> : item.description}</li>)}</ul> : <p className="mt-1 text-slate-500">No achievements recorded.</p>}</section>
-      <section><h4 className="font-semibold">Notes</h4><p className="mt-1 whitespace-pre-wrap text-slate-600">{version.notes || "No notes."}</p></section>
+      <section>
+        <h4 className="font-semibold">Blockers</h4>
+        {version.blockers.length ? (
+          <ul className="mt-2 space-y-1">
+            {version.blockers.map((item) => (
+              <li key={item.id ?? item.description}>
+                {item.isKey ? (
+                  <KeyItem>{item.description}</KeyItem>
+                ) : (
+                  item.description
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 text-slate-500">No blockers recorded.</p>
+        )}
+      </section>
+      <section>
+        <h4 className="font-semibold">Achievements</h4>
+        {version.achievements.length ? (
+          <ul className="mt-2 space-y-1">
+            {version.achievements.map((item) => (
+              <li key={item.id ?? item.description}>
+                {item.isKey ? (
+                  <KeyItem>{item.description}</KeyItem>
+                ) : (
+                  item.description
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-1 text-slate-500">No achievements recorded.</p>
+        )}
+      </section>
+      <section>
+        <h4 className="font-semibold">Notes</h4>
+        <p className="mt-1 whitespace-pre-wrap text-slate-600">
+          {version.notes || "No notes."}
+        </p>
+      </section>
     </article>
   );
 }
-function FullScreenVersionCompare({ reportId, versions, currentVersionId, editCurrent }: { reportId: string; versions: Pick<ReportVersion, "id" | "versionNumber">[]; currentVersionId?: string; editCurrent: () => void }) {
+const CURRENT_DRAFT = "__CURRENT_DRAFT__";
+
+function FullScreenVersionCompare({
+  reportId,
+  versions,
+  currentDraft,
+  currentEditor,
+}: {
+  reportId: string;
+  versions: Pick<ReportVersion, "id" | "versionNumber" | "submittedAt">[];
+  currentDraft?: ReportVersion | null;
+  currentEditor?: React.ReactNode;
+}) {
   const [open, setOpen] = useState(false);
   const [left, setLeft] = useState("");
-  const [right, setRight] = useState(currentVersionId ?? "");
-  const { data: leftResult } = useGetVersionQuery({ id: reportId, versionId: left }, { skip: !left });
-  const { data: rightResult } = useGetVersionQuery({ id: reportId, versionId: right }, { skip: !right });
-  return <><button type="button" className="mt-6 text-sm text-blue-700 underline" onClick={() => setOpen(true)}>Compare versions</button>{open && <div className="fixed inset-0 z-50 bg-slate-50" role="dialog" aria-modal="true" aria-label="Compare report versions"><header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4"><div><h2 className="text-xl font-semibold">Compare report versions</h2><p className="text-sm text-slate-600">Review complete report details side by side.</p></div><button type="button" className="button-secondary px-4" onClick={() => setOpen(false)}>Close</button></header><div className="grid h-[calc(100vh-89px)] gap-4 overflow-auto p-5 lg:grid-cols-2"><section className="rounded border border-slate-200 bg-white p-5"><label className="form-label">Version to compare<select className="form-input mt-1 px-3" value={left} onChange={(event) => setLeft(event.target.value)}><option value="">Select a version</option>{versions.map((version) => <option key={version.id} value={version.id}>Version {version.versionNumber}</option>)}</select></label><div className="mt-5"><VersionSnapshot version={leftResult?.data} /></div></section><section className="rounded border border-blue-200 bg-white p-5"><label className="form-label">Current or later version<select className="form-input mt-1 px-3" value={right} onChange={(event) => setRight(event.target.value)}><option value="">Select a version</option>{versions.map((version) => <option key={version.id} value={version.id}>Version {version.versionNumber}{version.id === currentVersionId ? " (current)" : ""}</option>)}</select></label>{right === currentVersionId && <button type="button" className="mt-3 text-sm text-blue-700 underline" onClick={() => { setOpen(false); editCurrent() }}>Edit current edition</button>}<div className="mt-5"><VersionSnapshot version={rightResult?.data} /></div></section></div></div>}</>;
+  const [right, setRight] = useState("");
+  const { data: leftResult } = useGetVersionQuery(
+    { id: reportId, versionId: left },
+    { skip: !left },
+  );
+  const { data: rightResult } = useGetVersionQuery(
+    { id: reportId, versionId: right },
+    { skip: !right || right === CURRENT_DRAFT },
+  );
+  const rightVersion =
+    right === CURRENT_DRAFT ? (currentDraft ?? undefined) : rightResult?.data;
+  return (
+    <>
+      <button
+        type="button"
+        className="mt-6 text-sm text-blue-700 underline"
+        onClick={() => setOpen(true)}
+      >
+        Compare versions
+      </button>
+      {open && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-50"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Compare report versions"
+        >
+          <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
+            <div>
+              <h2 className="text-xl font-semibold">Compare report versions</h2>
+              <p className="text-sm text-slate-600">
+                Review submitted versions side by side. Report editors can
+                update the current draft here.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="button-secondary px-4"
+              onClick={() => setOpen(false)}
+            >
+              Close
+            </button>
+          </header>
+          <div className="grid h-[calc(100vh-89px)] gap-4 overflow-auto p-5 lg:grid-cols-2">
+            <section className="rounded border border-slate-200 bg-white p-5">
+              <label className="form-label">
+                Submitted version
+                <select
+                  className="form-input mt-1 px-3"
+                  value={left}
+                  onChange={(event) => setLeft(event.target.value)}
+                >
+                  <option value="">Select a submitted version</option>
+                  {versions
+                    .filter((version) => version.submittedAt)
+                    .map((version) => (
+                      <option key={version.id} value={version.id}>
+                        Version {version.versionNumber}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <div className="mt-5">
+                <VersionSnapshot version={leftResult?.data} />
+              </div>
+            </section>
+            <section className="rounded border border-blue-200 bg-white p-5">
+              <label className="form-label">
+                Compare with
+                <select
+                  className="form-input mt-1 px-3"
+                  value={right}
+                  onChange={(event) => setRight(event.target.value)}
+                >
+                  <option value="">Select a version</option>
+                  {currentDraft && (
+                    <option value={CURRENT_DRAFT}>
+                      Current draft (editable)
+                    </option>
+                  )}
+                  {versions
+                    .filter((version) => version.submittedAt)
+                    .map((version) => (
+                      <option key={version.id} value={version.id}>
+                        Version {version.versionNumber}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <div className="mt-5">
+                {right === CURRENT_DRAFT ? (
+                  currentEditor
+                ) : (
+                  <VersionSnapshot version={rightVersion} />
+                )}
+              </div>
+            </section>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function CompareDraftEditor({
+  report,
+  version,
+  tasks,
+  setTasks,
+  blockers,
+  setBlockers,
+  achievements,
+  setAchievements,
+  notes,
+  setNotes,
+  saveDraft,
+  saving,
+  feedback,
+  applied,
+}: {
+  report: ReportDto;
+  version: ReportVersion;
+  tasks: ReportTask[];
+  setTasks: React.Dispatch<React.SetStateAction<ReportTask[]>>;
+  blockers: Blocker[];
+  setBlockers: React.Dispatch<React.SetStateAction<Blocker[]>>;
+  achievements: Achievement[];
+  setAchievements: React.Dispatch<React.SetStateAction<Achievement[]>>;
+  notes: string;
+  setNotes: React.Dispatch<React.SetStateAction<string>>;
+  saveDraft: (thenSubmit?: boolean) => void;
+  saving: boolean;
+  feedback: React.ReactNode;
+  applied: () => void;
+}) {
+  const setKey = <T extends Blocker | Achievement>(
+    setter: React.Dispatch<React.SetStateAction<T[]>>,
+    index: number,
+  ) =>
+    setter((items) =>
+      items.map((item, i) => ({ ...item, isKey: i === index })),
+    );
+  return (
+    <div className="space-y-4 text-sm">
+      <div>
+        <h3 className="text-lg font-semibold">
+          Current draft — Version {version.versionNumber}
+        </h3>
+        <p className="mt-1 text-slate-600">
+          Add or remove report tasks without leaving the comparison.
+        </p>
+      </div>
+      <div className="grid gap-3">
+        <CandidateList report={report} version={version} section="THIS_WEEK" applied={applied} />
+        <CandidateList report={report} version={version} section="NEXT_WEEK" applied={applied} />
+      </div>
+      <section>
+        <h4 className="font-semibold">Added report tasks</h4>
+        <div className="mt-2 space-y-2">
+          {tasks.length ? tasks.map((task, index) => (
+            <div className="flex items-start justify-between gap-3 rounded border border-slate-200 p-3" key={task.id ?? `draft-task-${index}`}>
+              <div><strong>{task.name}</strong><p className="mt-1 text-slate-600">{task.projectNameSnapshot ?? "No project"} · {task.section === "THIS_WEEK" ? "This week's work" : "Next week's plan"}</p><p className="mt-1 text-slate-600">Priority: {task.priority} · Type: {task.taskType}{task.status ? ` · Status: ${task.status}` : ""}</p></div>
+              <button type="button" className="text-red-700" onClick={() => setTasks((items) => items.filter((_, i) => i !== index))}>Remove task</button>
+            </div>
+          )) : <p className="text-slate-500">No tasks added.</p>}
+        </div>
+      </section>
+      <section className="rounded border border-slate-200 p-3">
+        <h4 className="font-semibold">Blockers</h4>
+        {blockers.map((item, index) => (
+          <div className="mt-2 flex gap-2" key={item.id ?? index}>
+            <input
+              className="form-input min-w-0 flex-1 px-2"
+              value={item.description}
+              placeholder="Describe a blocker"
+              onChange={(event) =>
+                setBlockers((items) =>
+                  items.map((current, i) =>
+                    i === index
+                      ? { ...current, description: event.target.value }
+                      : current,
+                  ),
+                )
+              }
+            />
+            <button
+              type="button"
+              className="text-blue-700"
+              onClick={() => setKey(setBlockers, index)}
+            >
+              {item.isKey ? "Flagged" : "Flag"}
+            </button>
+            <button
+              type="button"
+              className="text-red-700"
+              onClick={() =>
+                setBlockers((items) => items.filter((_, i) => i !== index))
+              }
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="mt-3 text-blue-700 underline"
+          onClick={() =>
+            setBlockers((items) => [
+              ...items,
+              {
+                description: "",
+                isKey: false,
+                status: "OPEN",
+                displayOrder: items.length,
+              },
+            ])
+          }
+        >
+          Add blocker
+        </button>
+      </section>
+      <section className="rounded border border-slate-200 p-3">
+        <h4 className="font-semibold">Achievements</h4>
+        {achievements.map((item, index) => (
+          <div className="mt-2 flex gap-2" key={item.id ?? index}>
+            <input
+              className="form-input min-w-0 flex-1 px-2"
+              value={item.description}
+              placeholder="Describe an achievement"
+              onChange={(event) =>
+                setAchievements((items) =>
+                  items.map((current, i) =>
+                    i === index
+                      ? { ...current, description: event.target.value }
+                      : current,
+                  ),
+                )
+              }
+            />
+            <button
+              type="button"
+              className="text-blue-700"
+              onClick={() => setKey(setAchievements, index)}
+            >
+              {item.isKey ? "Flagged" : "Flag"}
+            </button>
+            <button
+              type="button"
+              className="text-red-700"
+              onClick={() =>
+                setAchievements((items) => items.filter((_, i) => i !== index))
+              }
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        <button
+          type="button"
+          className="mt-3 text-blue-700 underline"
+          onClick={() =>
+            setAchievements((items) => [
+              ...items,
+              { description: "", isKey: false, displayOrder: items.length },
+            ])
+          }
+        >
+          Add achievement
+        </button>
+      </section>
+      <label className="form-label block">
+        Notes
+        <textarea
+          className="form-input mt-1 min-h-24 px-3 py-2"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+        />
+      </label>
+      {feedback}
+      <div className="flex flex-wrap justify-end gap-2">
+        <button
+          className="button-secondary px-4"
+          disabled={saving}
+          onClick={() => saveDraft(false)}
+        >
+          Save draft
+        </button>
+        <button
+          className="button-primary px-4"
+          disabled={saving}
+          onClick={() => saveDraft(true)}
+        >
+          Save and submit
+        </button>
+      </div>
+    </div>
+  );
 }
 function CandidateList({
   report,
@@ -467,8 +871,9 @@ function RequestChangesDialog({
   );
 }
 function ReportEditor({ id, close }: { id: string; close: () => void }) {
+  const { user, hasPermission } = useAuth();
   const { data, isLoading, isError, refetch } = useGetReportQuery(id);
-  const { data: versions } = useGetVersionsQuery({ id });
+  const { data: versions, refetch: refetchVersions } = useGetVersionsQuery({ id });
   const [save, saveState] = useSaveReportMutation();
   const [submit, submitState] = useSubmitReportMutation();
   const [createCorrection, correctionState] = useCreateCorrectionMutation();
@@ -510,7 +915,9 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
     );
   const report = data.data;
   const editable =
-    report.status === "DRAFT" || report.status === "NEEDS_CORRECTION";
+    report.member.id === user?.id &&
+    hasPermission("report:update_own") &&
+    (report.status === "DRAFT" || report.status === "NEEDS_CORRECTION");
   const editableDraft = draft && !draft.submittedAt ? draft : null;
   const totalActualMinutes = tasks.reduce(
     (total, task) => total + (task.actualMinutes ?? 0),
@@ -519,7 +926,10 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
   const thisWeekTasks = tasks.filter((task) => task.section === "THIS_WEEK");
   const nextWeekTasks = tasks.filter((task) => task.section === "NEXT_WEEK");
   const groupedTasks = [...thisWeekTasks, ...nextWeekTasks];
-  const apply = () => void refetch();
+  const apply = () => {
+    void refetch();
+    void refetchVersions();
+  };
   const reindex = (items: ReportTask[]) =>
     items.map((task, index) => ({ ...task, displayOrder: index }));
   const setKey = <T extends Blocker | Achievement>(
@@ -571,7 +981,10 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
             lockVersion: result.data.lockVersion,
           })
             .unwrap()
-            .then(() => refetch());
+            .then(() => {
+              void refetch();
+              void refetchVersions();
+            });
         return undefined;
       })
       .catch(() => undefined);
@@ -624,33 +1037,32 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
                       <div className="space-y-2">
                         {sectionTasks.map((task) => (
                           <div className="contents" key={task.id}>
-                          <ReadOnlyReportTask
-                            task={task}
-                            section={section}
-                            memberId={report.member.id}
-                          />
-                          <div
-                            className="hidden"
-                          >
-                            <strong>{task.name}</strong>
-                            <p className="mt-1 text-slate-600">
-                              {task.projectNameSnapshot ?? "No project"} ·
-                              Priority: {task.priority} · Type: {task.taskType}
-                              {task.status ? ` · Status: ${task.status}` : ""}
-                            </p>
-                            <p className="mt-1 text-slate-600">
-                              Planned: {formatDuration(task.plannedMinutes)} ·
-                              Actual: {formatDuration(task.actualMinutes)}
-                              {section === "THIS_WEEK"
-                                ? ` · Progress: ${task.actualCompletionPct ?? 0}%`
-                                : ` · Planned progress: ${task.plannedCompletionPct ?? 0}%`}
-                            </p>
-                            {task.deliverable && (
+                            <ReadOnlyReportTask
+                              task={task}
+                              section={section}
+                              memberId={report.member.id}
+                            />
+                            <div className="hidden">
+                              <strong>{task.name}</strong>
                               <p className="mt-1 text-slate-600">
-                                Deliverable: {task.deliverable}
+                                {task.projectNameSnapshot ?? "No project"} ·
+                                Priority: {task.priority} · Type:{" "}
+                                {task.taskType}
+                                {task.status ? ` · Status: ${task.status}` : ""}
                               </p>
-                            )}
-                          </div>
+                              <p className="mt-1 text-slate-600">
+                                Planned: {formatDuration(task.plannedMinutes)} ·
+                                Actual: {formatDuration(task.actualMinutes)}
+                                {section === "THIS_WEEK"
+                                  ? ` · Progress: ${task.actualCompletionPct ?? 0}%`
+                                  : ` · Planned progress: ${task.plannedCompletionPct ?? 0}%`}
+                              </p>
+                              {task.deliverable && (
+                                <p className="mt-1 text-slate-600">
+                                  Deliverable: {task.deliverable}
+                                </p>
+                              )}
+                            </div>
                           </div>
                         ))}
                       </div>
@@ -666,7 +1078,11 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
                   <ul className="mt-1 list-disc pl-5">
                     {report.content.blockers.map((item) => (
                       <li key={item.id}>
-                        {item.isKey ? <KeyItem>{item.description}</KeyItem> : item.description}
+                        {item.isKey ? (
+                          <KeyItem>{item.description}</KeyItem>
+                        ) : (
+                          item.description
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -680,7 +1096,11 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
                   <ul className="mt-1 list-disc pl-5">
                     {report.content.achievements.map((item) => (
                       <li key={item.id}>
-                        {item.isKey ? <KeyItem>{item.description}</KeyItem> : item.description}
+                        {item.isKey ? (
+                          <KeyItem>{item.description}</KeyItem>
+                        ) : (
+                          item.description
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -713,7 +1133,10 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
             onClick={() =>
               void createCorrection(report.id)
                 .unwrap()
-                .then(() => refetch())
+                .then(() => {
+                  void refetch();
+                  void refetchVersions();
+                })
                 .catch(() => undefined)
             }
           >
@@ -940,8 +1363,40 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
         <FullScreenVersionCompare
           reportId={report.id}
           versions={versions.data.data}
-          currentVersionId={editableDraft?.id}
-          editCurrent={() => document.getElementById("current-edition")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+          currentDraft={
+            editableDraft
+              ? { ...editableDraft, notes, tasks, blockers, achievements }
+              : null
+          }
+          currentEditor={
+            editableDraft ? (
+              <CompareDraftEditor
+                report={report}
+                version={editableDraft}
+                tasks={tasks}
+                setTasks={setTasks}
+                blockers={blockers}
+                setBlockers={setBlockers}
+                achievements={achievements}
+                setAchievements={setAchievements}
+                notes={notes}
+                setNotes={setNotes}
+                saveDraft={saveDraft}
+                saving={saveState.isLoading || submitState.isLoading}
+                applied={apply}
+                feedback={
+                  saveState.isError ||
+                  submitState.isError ||
+                  validationError ? (
+                    <FormFeedback>
+                      {validationError ??
+                        "Could not save the report. Refresh it and try again."}
+                    </FormFeedback>
+                  ) : null
+                }
+              />
+            ) : undefined
+          }
         />
       )}
     </Dialog>
@@ -949,9 +1404,26 @@ function ReportEditor({ id, close }: { id: string; close: () => void }) {
 }
 export function ReportsPage() {
   const { hasPermission } = useAuth();
+  const [searchParams] = useSearchParams();
   const team = hasPermission("report:read_team");
-  const [scope, setScope] = useState<"own" | "team">("own");
+  const selectedMemberId = searchParams.get("memberId") ?? undefined;
+  const [scope, setScope] = useState<"own" | "team">(
+    selectedMemberId && team ? "team" : "own",
+  );
   const [page, setPage] = useState(1);
+  const [memberQuery, setMemberQuery] = useState("");
+  const [projectQuery, setProjectQuery] = useState("");
+  const [fromWeek, setFromWeek] = useState("");
+  const [toWeek, setToWeek] = useState("");
+  useEffect(() => {
+    if (selectedMemberId && team) {
+      setScope("team");
+      setPage(1);
+    }
+  }, [selectedMemberId, team]);
+  useEffect(() => {
+    if (fromWeek && toWeek && toWeek < fromWeek) setToWeek("");
+  }, [fromWeek, toWeek]);
   const [selected, setSelected] = useState<string | null>(null);
   const [requestChanges, setRequestChanges] = useState<{
     reportId: string;
@@ -964,15 +1436,31 @@ export function ReportsPage() {
     page,
     pageSize: 20,
     scope,
+    ...(scope === "team" && selectedMemberId ? { memberId: selectedMemberId } : {}),
+    ...(scope === "team" && memberQuery.trim()
+      ? { memberQuery: memberQuery.trim() }
+      : {}),
+    ...(projectQuery.trim() ? { projectQuery: projectQuery.trim() } : {}),
+    ...(fromWeek ? { fromWeek } : {}),
+    ...(toWeek ? { toWeek } : {}),
   });
   const [create, createState] = useCreateReportMutation();
   const [deleteDraft, deleteDraftState] = useDeleteDraftReportMutation();
   const [review, reviewState] = useReviewReportMutation();
   const reports = data?.data.data ?? [];
+  const visibleReports = reports.filter(
+    (report) =>
+      (!fromWeek || report.weekStart >= fromWeek) &&
+      (!toWeek || report.weekStart <= toWeek),
+  );
   const createFor = (selectedWeek: string) => {
     const validation = reportWeekSchema.safeParse(selectedWeek);
     if (!validation.success) {
       setWeekError("Choose a Monday as the reporting week start.");
+      return;
+    }
+    if (validation.data > monday()) {
+      setWeekError("Choose the current Monday or a past reporting week.");
       return;
     }
     setWeekError(null);
@@ -1005,31 +1493,54 @@ export function ReportsPage() {
         )}
       </div>
       {team && (
-        <div className="mb-4 flex gap-2">
-          <button
-            className={
-              scope === "own" ? "button-primary px-3" : "button-secondary px-3"
-            }
-            onClick={() => {
-              setScope("own");
-              setPage(1);
-            }}
-          >
-            My reports
-          </button>
-          <button
-            className={
-              scope === "team" ? "button-primary px-3" : "button-secondary px-3"
-            }
-            onClick={() => {
-              setScope("team");
-              setPage(1);
-            }}
-          >
-            Team reports
-          </button>
+        <div className="mb-4 space-y-3">
+          <div className="flex gap-2">
+            <button
+              className={
+                scope === "own"
+                  ? "button-primary px-3"
+                  : "button-secondary px-3"
+              }
+              onClick={() => {
+                setScope("own");
+                setPage(1);
+              }}
+            >
+              My reports
+            </button>
+            <button
+              className={
+                scope === "team"
+                  ? "button-primary px-3"
+                  : "button-secondary px-3"
+              }
+              onClick={() => {
+                setScope("team");
+                setPage(1);
+              }}
+            >
+              Team reports
+            </button>
+          </div>
         </div>
       )}
+      <div className={`mb-4 grid gap-3 rounded-md border border-slate-200 bg-white p-3 ${scope === "team" ? "sm:grid-cols-4" : "sm:grid-cols-3"}`}>
+          {scope === "team" && (
+              <input
+                className="form-input px-3"
+                aria-label="Search reports by team member"
+                value={memberQuery}
+                placeholder="Search member name, email or employee ID"
+                onChange={(event) => {
+                  setMemberQuery(event.target.value);
+                  setPage(1);
+                }}
+              />
+          )}
+          <input className="form-input px-3" aria-label="Search reports by project" value={projectQuery} placeholder="Search project" onChange={(event) => { setProjectQuery(event.target.value); setPage(1); }} />
+          <label className="form-label">From reporting week<select className="form-input mt-1 px-3" aria-label="Filter reports from week" value={fromWeek} onChange={(event) => { setFromWeek(event.target.value); setPage(1); }}><option value="">Any week</option>{Array.from({ length: 53 }, (_, index) => monday(-index)).map((week) => <option key={week} value={week}>{week}</option>)}</select></label>
+          <label className="form-label">To reporting week <span className="font-normal text-slate-500">(optional)</span><select className="form-input mt-1 px-3" aria-label="Filter reports to week" value={toWeek} onChange={(event) => { setToWeek(event.target.value); setPage(1); }}><option value="">No end week</option>{Array.from({ length: 53 }, (_, index) => monday(-index)).map((week) => <option key={week} value={week} disabled={Boolean(fromWeek && week < fromWeek)}>{week}</option>)}</select></label>
+      </div>
       {createState.isError && (
         <div className="mb-4">
           <FormFeedback>
@@ -1038,12 +1549,12 @@ export function ReportsPage() {
         </div>
       )}
       {isLoading && <p className="text-sm text-slate-500">Loading reports…</p>}
-      {reports.length === 0 && !isLoading && (
+      {visibleReports.length === 0 && !isLoading && (
         <div className="rounded-md border border-slate-200 bg-white p-6 text-sm text-slate-600">
           No reports yet. Create a report for any reporting week.
         </div>
       )}
-      {reports.length > 0 && (
+      {visibleReports.length > 0 && (
         <div className="overflow-x-auto rounded-md border border-slate-200 bg-white">
           <table className="w-full min-w-175 text-left text-sm">
             <thead className="bg-slate-50 text-xs text-slate-500">
@@ -1056,7 +1567,7 @@ export function ReportsPage() {
               </tr>
             </thead>
             <tbody>
-              {reports.map((report) => (
+              {visibleReports.map((report) => (
                 <tr key={report.id} className="border-t border-slate-100">
                   <td className="p-3">
                     {report.weekStart} – {report.weekEnd}
@@ -1155,8 +1666,8 @@ export function ReportsPage() {
             }}
           >
             <p className="text-sm text-slate-600">
-              Select the Monday that starts the reporting week. Past and future
-              weeks are supported.
+              Select the Monday that starts the reporting week. You can create
+              reports for the current or a past week.
             </p>
             <label className="form-label">
               Reporting week
@@ -1165,6 +1676,7 @@ export function ReportsPage() {
                 type="date"
                 className="form-input mt-1 px-3"
                 value={weekStart}
+                max={monday()}
                 onChange={(event) => setWeekStart(event.target.value)}
               />
             </label>

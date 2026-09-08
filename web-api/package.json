@@ -14,6 +14,7 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "prisma db execute --file prisma/seed-rbac.sql",
+    "db:seed:demo": "npm run build && node scripts/seed-demo-data.cjs",
     "db:status": "prisma migrate status",
     "db:verify": "node test/database/verify.cjs",
     "db:verify:replay": "node test/database/verify.cjs --replay",

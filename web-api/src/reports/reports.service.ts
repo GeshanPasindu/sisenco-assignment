@@ -55,6 +55,13 @@ const validMonday = (v: string, field = 'weekStart') => {
     ]);
   return d;
 };
+const currentMonday = () => {
+  const d = new Date();
+  const day = d.getUTCDay();
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return d;
+};
 const weekEnd = (week: Date) => {
   const d = new Date(week);
   d.setUTCDate(d.getUTCDate() + 6);
@@ -173,6 +180,13 @@ export class ReportsService {
     )
       throw new ApiError(404, 'NOT_FOUND', 'Resource not found.');
   }
+  private canViewCurrentDraft(actor: AuthenticatedUser, r: ReportFull) {
+    return (
+      r.member.id === actor.id &&
+      actor.permissions.includes('report:update_own') &&
+      ['DRAFT', 'NEEDS_CORRECTION'].includes(r.status)
+    );
+  }
   private timing(r: ReportFull) {
     const submitted = r.versions
       .filter((v) => v.submittedAt)
@@ -195,7 +209,7 @@ export class ReportsService {
         )
       : null;
     const content =
-      access === 'own'
+      actor && this.canViewCurrentDraft(actor, r)
         ? (editable ?? latestSubmitted ?? null)
         : (latestSubmitted ?? null);
     return {
@@ -229,12 +243,73 @@ export class ReportsService {
         'VALIDATION_FAILED',
         'Request validation failed.',
       );
+    if (q.fromWeek && q.toWeek) {
+      const fromWeek = validMonday(q.fromWeek, 'fromWeek');
+      const toWeek = validMonday(q.toWeek, 'toWeek');
+      if (toWeek < fromWeek)
+        throw new ApiError(
+          400,
+          'VALIDATION_FAILED',
+          'Request validation failed.',
+          [
+            {
+              field: 'toWeek',
+              code: 'INVALID_RANGE',
+              message: 'End week cannot be before start week.',
+            },
+          ],
+        );
+    }
     const filters: Prisma.ReportWhereInput[] = [
       ...(q.scope === 'team'
         ? [{ status: { in: ['SUBMITTED', 'NEEDS_CORRECTION', 'APPROVED'] as never[] } }]
         : []),
       ...(q.status ? [{ status: q.status as never }] : []),
     ];
+    if (q.scope === 'team' && q.memberQuery?.trim()) {
+      const query = q.memberQuery.trim();
+      filters.push({
+        member: {
+          OR: [
+            { firstName: { contains: query, mode: 'insensitive' } },
+            { lastName: { contains: query, mode: 'insensitive' } },
+            { email: { contains: query, mode: 'insensitive' } },
+            { employeeId: { contains: query, mode: 'insensitive' } },
+          ],
+        },
+      });
+    }
+    if (q.projectId || q.projectQuery?.trim()) {
+      const query = q.projectQuery?.trim();
+      filters.push({
+        versions: {
+          some: {
+            tasks: {
+              some: {
+                ...(q.projectId ? { projectId: q.projectId } : {}),
+                ...(query
+                  ? {
+                      OR: [
+                        {
+                          project: {
+                            is: { name: { contains: query, mode: 'insensitive' } },
+                          },
+                        },
+                        {
+                          projectNameSnapshot: {
+                            contains: query,
+                            mode: 'insensitive',
+                          },
+                        },
+                      ],
+                    }
+                  : {}),
+              },
+            },
+          },
+        },
+      });
+    }
     if (q.fromWeek || q.toWeek)
       filters.push({
         weekStart: {
@@ -286,6 +361,19 @@ export class ReportsService {
   }
   async create(actor: AuthenticatedUser, dto: CreateReportDto) {
     const week = validMonday(dto.weekStart);
+    if (week > currentMonday())
+      throw new ApiError(
+        400,
+        'FUTURE_REPORT_NOT_ALLOWED',
+        'Reports cannot be created for future weeks.',
+        [
+          {
+            field: 'weekStart',
+            code: 'FUTURE_WEEK',
+            message: 'Choose the current Monday or a past Monday.',
+          },
+        ],
+      );
     try {
       const r = await this.prisma.report.create({
         data: {
@@ -904,8 +992,9 @@ export class ReportsService {
   }
   async versions(actor: AuthenticatedUser, id: string, q: VersionsQueryDto) {
     const r = await this.report(id);
-    const access = this.canRead(actor, r);
-    const all = r.versions.filter((v) => access === 'own' || v.submittedAt);
+    this.canRead(actor, r);
+    const canViewCurrentDraft = this.canViewCurrentDraft(actor, r);
+    const all = r.versions.filter((v) => v.submittedAt || canViewCurrentDraft);
     const total = all.length;
     return {
       data: all
@@ -931,9 +1020,9 @@ export class ReportsService {
   }
   async version(actor: AuthenticatedUser, id: string, versionId: string) {
     const r = await this.report(id);
-    const access = this.canRead(actor, r);
+    this.canRead(actor, r);
     const v = r.versions.find((x) => x.id === versionId);
-    if (!v || (!v.submittedAt && access !== 'own'))
+    if (!v || (!v.submittedAt && !this.canViewCurrentDraft(actor, r)))
       throw new ApiError(404, 'NOT_FOUND', 'Resource not found.');
     return mapVersion(v);
   }
