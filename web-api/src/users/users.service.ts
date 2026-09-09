@@ -391,26 +391,12 @@ export class UsersService {
         include: includeUser,
       });
       if (!user) throw new ApiError(404, 'NOT_FOUND', 'Resource not found.');
-      if (
-        user.role.code === 'MANAGER_ADMIN' &&
-        user.activatedAt &&
-        !user.deactivatedAt
-      ) {
-        const count = await tx.user.count({
-          where: {
-            id: { not: id },
-            activatedAt: { not: null },
-            deactivatedAt: null,
-            role: { code: 'MANAGER_ADMIN', deletedAt: null },
-          },
-        });
-        if (count < 1)
-          throw new ApiError(
-            409,
-            'LAST_ACTIVE_MANAGER',
-            'The last active manager cannot be deactivated.',
-          );
-      }
+      if (user.role.code === 'MANAGER_ADMIN')
+        throw new ApiError(
+          409,
+          'ADMIN_ACCOUNT_PROTECTED',
+          'Manager admin accounts cannot be deactivated.',
+        );
       if (!user.deactivatedAt) {
         const now = new Date();
         await tx.user.update({ where: { id }, data: { deactivatedAt: now } });
