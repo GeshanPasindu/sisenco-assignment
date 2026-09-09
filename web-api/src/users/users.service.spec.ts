@@ -53,6 +53,25 @@ describe('UsersService', () => {
     });
   });
 
+  it('does not allow a manager admin account to be deactivated', async () => {
+    const { prisma, service } = fixture();
+    const database = prisma as unknown as { $transaction: jest.Mock };
+    database.$transaction.mockImplementation(
+      (work: (tx: unknown) => unknown) =>
+        work({
+          user: {
+            findUnique: jest.fn().mockResolvedValue({
+              role: { code: 'MANAGER_ADMIN' },
+            }),
+          },
+        }),
+    );
+
+    await expect(service.deactivate('admin-user')).rejects.toMatchObject({
+      response: expect.objectContaining({ code: 'ADMIN_ACCOUNT_PROTECTED' }),
+    });
+  });
+
   it('returns a manual invitation token when email delivery is unavailable', async () => {
     const { prisma, mail, service } = fixture();
     const database = prisma as unknown as {
